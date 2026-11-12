@@ -1,0 +1,75 @@
+.gradle/
+bin/
+build/
+run/
+*.log
+*.bak
+.classpath
+.project
+.settings/
+.DS_Store
+*.gz
+
+# Screenshots
+*.bmp
+shot_*/
+
+# C++ build artifacts
+*.obj
+*.exp
+*.lib
+
+# 本地工具链（DXC 等，仅用于离线编译光追着色器）
+.tools/
+
+# Rust build artifacts
+rust/target/
+
+# IDE workspace (auto-generated)
+
+
+# Backup dirs
+backup/
+# Visual Studio 
+# Visual Studio 
+.vs/ 
+*.ipch 
+*.suo 
+*.user 
+
+
+# Minecraft directories
+!D:\\.minecraft\\ 
+
+##文件目录
+temp_mc_extracted/
+temp_mc_extracted2/
+temp_mc_shaders/
+Helian-MMCO.v1.2.14.Sundial.Lite.edit/
+
+# 图片目录
+图片/
+*.png
+*.jpg
+*.jpeg
+*.bmp
+Picture/
+
+## 方案
+多线程方案.md
+优化.md
+
+
+## 脚本/程序
+copilot.exe
+*.ps1
+*.py
+Helian-MMCO_v0.6.14_Sundial-lite_edit.zip
+docs/
+temp_mc_extracted/
+
+步骤.md
+多线程方案.md
+多线程方案审查.md
+.trae/
+.agents/
