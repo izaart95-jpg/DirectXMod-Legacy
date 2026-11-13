@@ -22,6 +22,7 @@ class PerfConfigTest {
         assertEquals("REGION_8", config.regionSize);
         assertTrue(config.regionUpload);
         assertFalse(config.regionDraws);
+        assertTrue(config.uploadBudget);
         assertFalse(config.compactVertices);
         assertFalse(config.compactVerticesForce);
         assertFalse(config.translucentRegion);

@@ -77,7 +77,9 @@ public final class PerfCommand {
                 yield !(flag.equals("debughud")
                     || flag.equals("hud")
                     || flag.equals("debuglog")
-                    || flag.equals("log"));
+                    || flag.equals("log")
+                    || flag.equals("uploadbudget")
+                    || flag.equals("budget"));
             }
             default -> false;
         };
@@ -96,6 +98,7 @@ public final class PerfCommand {
             + " translucentRegion=" + config.translucentRegion
             + "\n" + snapshot.format()
             + "\n" + RegionManager.describe()
+            + "\n" + com.xgdt.dx11.perf.upload.UploadScheduler.describe()
             + "\nconfig=" + PerfState.configPath();
     }
 
@@ -139,6 +142,10 @@ public final class PerfCommand {
             case "regiondraws", "draws" -> {
                 config.regionDraws = !config.regionDraws;
                 yield config.regionDraws;
+            }
+            case "uploadbudget", "budget" -> {
+                config.uploadBudget = !config.uploadBudget;
+                yield config.uploadBudget;
             }
             case "compactvertices", "compact" -> {
                 config.compactVertices = !config.compactVertices;
@@ -205,10 +212,10 @@ public final class PerfCommand {
               /dx11perf stats | reset | leaks | reload | save
               /dx11perf toggle            - enable/disable the perf layer
               /dx11perf toggle <flag>     - debugHud, debugLog, regionUpload, regionDraws,
-                                            compactVertices, compactVerticesForce,
-                                            translucentRegion, fogOcclusion,
-                                            deferredOffscreenUpdates, entityCulling,
-                                            visibleTextureAnimation
+                                            uploadBudget, compactVertices,
+                                            compactVerticesForce, translucentRegion,
+                                            fogOcclusion, deferredOffscreenUpdates,
+                                            entityCulling, visibleTextureAnimation
               /dx11perf regionSize <REGION_4|REGION_8>
             The perf layer is experimental and requires the D3D11 backend.""";
     }

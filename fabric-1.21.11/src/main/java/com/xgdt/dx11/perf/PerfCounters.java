@@ -78,6 +78,11 @@ public final class PerfCounters {
         }
     }
 
+    /** Raw uploaded-byte counter, used by the upload budget window. */
+    public static long uploadBytes() {
+        return UPLOAD_BYTES.get();
+    }
+
     public static Snapshot snapshot() {
         return new Snapshot(
             DRAWS.get(),

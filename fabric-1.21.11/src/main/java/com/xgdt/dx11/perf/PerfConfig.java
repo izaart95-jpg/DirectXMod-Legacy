@@ -45,9 +45,11 @@ public final class PerfConfig {
      */
     public boolean regionDraws = false;
 
+    /** Apply the per-frame upload section/byte budget. */
+    public boolean uploadBudget = true;
     public int uploadMaxSectionsPerFrame = 6;
     public int uploadMaxBytesPerFrame = 4 * 1024 * 1024;
-    /** Per-frame deferred upload budget for Phase 3. */
+    /** Soft cap on queued deferred upload bytes before the section cap is relaxed. */
     public int deferredUploadLimitMb = 32;
     /**
      * Total GPU capacity for region vertex arenas.  This is separate from the

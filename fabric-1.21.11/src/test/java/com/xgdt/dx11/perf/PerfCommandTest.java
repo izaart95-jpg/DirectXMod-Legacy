@@ -21,6 +21,7 @@ class PerfCommandTest {
         assertFalse(PerfCommand.requiresChunkRebuild("/dx11perf leaks"));
         assertFalse(PerfCommand.requiresChunkRebuild("/dx11perf toggle hud"));
         assertFalse(PerfCommand.requiresChunkRebuild("/dx11perf toggle debugLog"));
+        assertFalse(PerfCommand.requiresChunkRebuild("/dx11perf toggle uploadBudget"));
         assertFalse(PerfCommand.requiresChunkRebuild("/say hello"));
         assertFalse(PerfCommand.requiresChunkRebuild(null));
     }

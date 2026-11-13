@@ -1,8 +1,13 @@
 package com.xgdt.dx11.mixin;
 
+import com.llamalad7.mixinextras.injector.wrapoperation.Operation;
+import com.llamalad7.mixinextras.injector.wrapoperation.WrapOperation;
 import com.mojang.blaze3d.vertex.MeshData;
 import com.xgdt.dx11.perf.region.RegionUploader;
+import com.xgdt.dx11.perf.upload.UploadScheduler;
 import java.util.Map;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.Executor;
 import net.fabricmc.api.EnvType;
 import net.fabricmc.api.Environment;
 import net.minecraft.client.renderer.chunk.ChunkSectionLayer;
@@ -15,10 +20,12 @@ import org.spongepowered.asm.mixin.Shadow;
 import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
+import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
 
 /**
  * Takes over the render-thread section upload body when the region renderer is
- * active.
+ * active, and tags the queued upload task with its section origin so Phase 3 can
+ * drain the queue in distance order.
  *
  * <p>The vanilla body is a private {@code void b(Map, CompiledSectionMesh)}
  * that runs on the section render dispatcher's main-thread executor.  The
@@ -36,6 +43,32 @@ public abstract class RenderSectionUploadMixin {
 
     @Shadow
     public abstract BlockPos getRenderOrigin();
+
+    @Inject(method = "upload", at = @At("HEAD"))
+    private void dx11$noteUploadSize(
+        Map<ChunkSectionLayer, MeshData> meshes,
+        CompiledSectionMesh mesh,
+        CallbackInfoReturnable<CompletableFuture<Void>> cir) {
+        UploadScheduler.notePendingBytes(meshes);
+    }
+
+    @WrapOperation(
+        method = "upload",
+        at = @At(
+            value = "INVOKE",
+            target = "Ljava/util/concurrent/CompletableFuture;runAsync(Ljava/lang/Runnable;Ljava/util/concurrent/Executor;)Ljava/util/concurrent/CompletableFuture;"))
+    private CompletableFuture<Void> dx11$wrapUploadTask(
+        Runnable task, Executor executor, Operation<CompletableFuture<Void>> original) {
+        return original.call(UploadScheduler.wrap(this.getRenderOrigin(), task), executor);
+    }
+
+    @Inject(method = "upload", at = @At("RETURN"))
+    private void dx11$clearUploadSize(
+        Map<ChunkSectionLayer, MeshData> meshes,
+        CompiledSectionMesh mesh,
+        CallbackInfoReturnable<CompletableFuture<Void>> cir) {
+        UploadScheduler.clearPendingBytes();
+    }
 
     @Inject(method = "method_72051", at = @At("HEAD"), cancellable = true)
     private void dx11$uploadToRegion(
