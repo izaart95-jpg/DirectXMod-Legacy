@@ -3,7 +3,14 @@
   "package": "com.xgdt.dx11.mixin",
   "compatibilityLevel": "JAVA_21",
   "client": [
+    "ChunkSectionsToRenderMixin",
+    "CompiledSectionMeshAccessor",
+    "DebugScreenOverlayMixin",
+    "LevelRendererLifecycleMixin",
+    "PerfCommandMixin",
+    "RenderSectionUploadMixin",
     "RenderSystemMixin",
+    "SectionRenderDispatcherMixin",
     "VertexFormatBuilderMixin",
     "WindowMixin"
   ],

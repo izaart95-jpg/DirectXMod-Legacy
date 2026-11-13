@@ -80,6 +80,7 @@ final class Dx11Device implements GpuDevice {
     }
 
     static Dx11Device create(long windowHandle, @Nullable ShaderSource shaderSource) {
+        Dx11Config.applyFeatureLevelCap();
         long handle = Dx11Native.nativeCreateDevice(nativeWindowHandle(windowHandle));
         if (handle == 0L) {
             throw new IllegalStateException("nativeCreateDevice returned 0");

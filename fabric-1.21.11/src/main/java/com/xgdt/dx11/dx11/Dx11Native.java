@@ -157,6 +157,15 @@ public final class Dx11Native {
      */
     public static native String dx11Probe();
 
+    /**
+     * Clamps the feature levels requested by both the probe and the persistent
+     * device.  Must be called before the first device is created.  Passing a
+     * level that the adapter does not support makes device creation fail
+     * instead of silently selecting a lower level, which is what the FL10.x
+     * validation path wants.
+     */
+    public static native void nativeSetMaxFeatureLevel(int major, int minor);
+
     // -----------------------------------------------------------------------
     // Device / swapchain
     // -----------------------------------------------------------------------
