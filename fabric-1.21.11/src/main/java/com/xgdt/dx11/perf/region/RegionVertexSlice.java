@@ -24,6 +24,7 @@ public final class RegionVertexSlice extends GpuBuffer {
     private final int vertexCount;
     private final ChunkSectionLayer layer;
     private final boolean regionRelative;
+    private final boolean compact;
     private final int startVertex;
     private final float[] centroids;
     private boolean closed;
@@ -37,6 +38,7 @@ public final class RegionVertexSlice extends GpuBuffer {
         int vertexCount,
         ChunkSectionLayer layer,
         boolean regionRelative,
+        boolean compact,
         float[] centroids) {
         super(USAGE_VERTEX | USAGE_COPY_DST, byteSize);
         if (offset < 0 || byteSize <= 0 || vertexStride <= 0 || indexCount < 0
@@ -58,6 +60,7 @@ public final class RegionVertexSlice extends GpuBuffer {
         this.vertexCount = vertexCount;
         this.layer = layer;
         this.regionRelative = regionRelative;
+        this.compact = compact;
         this.startVertex = (int) start;
         this.centroids = centroids;
         regionBuffer.region().retainSlice();
@@ -98,6 +101,11 @@ public final class RegionVertexSlice extends GpuBuffer {
     /** True when the vertex positions were rebased to the region origin. */
     public boolean regionRelative() {
         return this.regionRelative;
+    }
+
+    /** True when the vertices use {@link CompactTerrainFormat}. */
+    public boolean compact() {
+        return this.compact;
     }
 
     /** First vertex of this slice relative to the region arena. */

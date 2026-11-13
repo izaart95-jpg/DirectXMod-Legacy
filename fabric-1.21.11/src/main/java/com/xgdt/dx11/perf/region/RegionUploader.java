@@ -144,22 +144,28 @@ public final class RegionUploader {
         }
 
         boolean regionRelative = PerfState.config().regionDraws;
+        int vertexCount = byteSize / stride;
+        int positionOffset = -1;
+        boolean compact = false;
+        int targetStride = stride;
+        int targetByteSize = byteSize;
         if (regionRelative) {
-            int vertexCount = byteSize / stride;
             if (vertexCount % 4 != 0 || draw.indexCount() != vertexCount / 4 * 6) {
                 // Coalescing treats neighbouring slices as one vertex stream,
                 // so a mesh that is not a whole number of quads cannot join a
                 // run.
                 return false;
             }
-        }
-        int positionOffset = -1;
-        if (regionRelative) {
             positionOffset = positionOffset(format);
             if (positionOffset < 0) {
                 // A custom/unknown terrain format: keep per-section buffers
                 // rather than drawing it against the wrong uniform.
                 return false;
+            }
+            compact = shouldCompact(layer, format);
+            if (compact) {
+                targetStride = CompactTerrainFormat.STRIDE;
+                targetByteSize = vertexCount * targetStride;
             }
         }
 
@@ -168,12 +174,13 @@ public final class RegionUploader {
             return false;
         }
 
-        long alignment = Math.max(4, stride);
-        RegionAllocator.Allocation allocation = regionBuffer.allocate(byteSize, alignment);
+        long alignment = Math.max(4, targetStride);
+        RegionAllocator.Allocation allocation =
+            regionBuffer.allocate(targetByteSize, alignment);
         if (allocation == null) {
             return false;
         }
-        if (allocation.offset() % stride != 0) {
+        if (allocation.offset() % targetStride != 0) {
             // DrawIndexedInstanced addresses vertices in whole strides; a
             // sub-stride offset would draw the wrong rows.  Only tiny,
             // non-terrain strides can hit this with the 4-byte minimum
@@ -185,28 +192,40 @@ public final class RegionUploader {
         RegionVertexSlice slice = null;
         try {
             if (regionRelative) {
-                ByteBuffer scratch = scratch(byteSize);
+                ByteBuffer scratch = scratch(targetByteSize);
                 int deltaX = sectionOrigin.getX() - region.originBlockX();
                 int deltaY = sectionOrigin.getY() - region.originBlockY();
                 int deltaZ = sectionOrigin.getZ() - region.originBlockZ();
-                RegionVertexRebase.rebase(
-                    vertices,
-                    scratch,
-                    byteSize,
-                    stride,
-                    positionOffset,
-                    deltaX,
-                    deltaY,
-                    deltaZ);
+                if (compact) {
+                    CompactTerrainFormat.convert(
+                        vertices,
+                        scratch,
+                        vertexCount,
+                        format,
+                        deltaX,
+                        deltaY,
+                        deltaZ);
+                } else {
+                    RegionVertexRebase.rebase(
+                        vertices,
+                        scratch,
+                        byteSize,
+                        stride,
+                        positionOffset,
+                        deltaX,
+                        deltaY,
+                        deltaZ);
+                }
                 slice = new RegionVertexSlice(
                     regionBuffer,
                     allocation.offset(),
-                    byteSize,
-                    stride,
+                    targetByteSize,
+                    targetStride,
                     draw.indexCount(),
-                    byteSize / stride,
+                    vertexCount,
                     layer,
                     true,
+                    compact,
                     null);
                 regionBuffer.write(allocation, scratch);
             } else {
@@ -216,8 +235,9 @@ public final class RegionUploader {
                     byteSize,
                     stride,
                     draw.indexCount(),
-                    byteSize / stride,
+                    vertexCount,
                     layer,
+                    false,
                     false,
                     null);
                 regionBuffer.write(allocation, vertices);
@@ -285,17 +305,21 @@ public final class RegionUploader {
         if (positionOffset < 0) {
             return false;
         }
+        boolean compact = shouldCompact(layer, format);
+        int targetStride = compact ? CompactTerrainFormat.STRIDE : stride;
+        int targetByteSize = vertexCount * targetStride;
 
         RegionBuffer regionBuffer = region.getBuffer(layer);
         if (regionBuffer == null) {
             return false;
         }
-        long alignment = Math.max(4, stride);
-        RegionAllocator.Allocation allocation = regionBuffer.allocate(byteSize, alignment);
+        long alignment = Math.max(4, targetStride);
+        RegionAllocator.Allocation allocation =
+            regionBuffer.allocate(targetByteSize, alignment);
         if (allocation == null) {
             return false;
         }
-        if (allocation.offset() % stride != 0) {
+        if (allocation.offset() % targetStride != 0) {
             regionBuffer.free(allocation.offset(), allocation.size());
             return false;
         }
@@ -314,25 +338,37 @@ public final class RegionUploader {
         RegionVertexSlice slice = null;
         GpuBuffer indexBuffer = null;
         try {
-            ByteBuffer scratch = scratch(byteSize);
-            RegionVertexRebase.rebase(
-                vertices,
-                scratch,
-                byteSize,
-                stride,
-                positionOffset,
-                deltaX,
-                deltaY,
-                deltaZ);
+            ByteBuffer scratch = scratch(targetByteSize);
+            if (compact) {
+                CompactTerrainFormat.convert(
+                    vertices,
+                    scratch,
+                    vertexCount,
+                    format,
+                    deltaX,
+                    deltaY,
+                    deltaZ);
+            } else {
+                RegionVertexRebase.rebase(
+                    vertices,
+                    scratch,
+                    byteSize,
+                    stride,
+                    positionOffset,
+                    deltaX,
+                    deltaY,
+                    deltaZ);
+            }
             slice = new RegionVertexSlice(
                 regionBuffer,
                 allocation.offset(),
-                byteSize,
-                stride,
+                targetByteSize,
+                targetStride,
                 draw.indexCount(),
                 vertexCount,
                 layer,
                 true,
+                compact,
                 regionCentroids);
             regionBuffer.write(allocation, scratch);
 
@@ -365,6 +401,35 @@ public final class RegionUploader {
             }
             throw e;
         }
+    }
+
+    /**
+     * True when this upload should use the 24-byte compact layout.  Compact
+     * mode needs region-relative draws and a terrain shader that only reads
+     * the compact-provided inputs; an explicit force flag overrides the shader
+     * check for custom packs.
+     */
+    private static boolean shouldCompact(ChunkSectionLayer layer, VertexFormat format) {
+        PerfConfig config = PerfState.config();
+        if (!config.compactVertices || !config.regionDraws) {
+            return false;
+        }
+        if (!CompactTerrainFormat.supports(format)) {
+            return false;
+        }
+        if (!config.compactVerticesForce
+            && CompactTerrainFormat.shaderObserved()
+            && !CompactTerrainFormat.shaderCompatible()) {
+            // A vanilla terrain pipeline already proved this pack needs
+            // non-compact inputs; do not spend a compile attempt per layer.
+            CompactTerrainFormat.warnShaderIncompatibleOnce();
+            return false;
+        }
+        // When the interface has not been observed yet, compiling the compact
+        // pipeline validates the real shader variant before any vertex is
+        // packed.  This also lets compact mode come back after a shader reload
+        // without waiting for a vanilla terrain draw.
+        return PerfTerrainPipelines.isUsable(layer);
     }
 
     /**

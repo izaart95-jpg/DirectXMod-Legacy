@@ -62,6 +62,37 @@ class RegionRunsTest {
     }
 
     @Test
+    void breaksRunsWhenCompactnessChanges() {
+        List<RegionRuns.Span> spans = List.of(
+            new RegionRuns.Span(0, 384, 24, 144, true),
+            new RegionRuns.Span(384, 384, 24, 144, true),
+            new RegionRuns.Span(768, 320, 32, 60),
+            new RegionRuns.Span(1088, 320, 32, 60));
+
+        List<RegionRuns.Run> runs = RegionRuns.coalesce(0, spans);
+
+        assertEquals(2, runs.size());
+        RegionRuns.Run compact = runs.get(0);
+        assertTrue(compact.compact());
+        assertEquals(0, compact.startVertex());
+        assertEquals(288, compact.indexCount());
+        assertEquals(2, compact.sliceCount());
+
+        RegionRuns.Run vanilla = runs.get(1);
+        assertEquals(false, vanilla.compact());
+        assertEquals(768 / 32, vanilla.startVertex());
+        assertEquals(120, vanilla.indexCount());
+        assertEquals(2, vanilla.sliceCount());
+    }
+
+    @Test
+    void spanWithoutCompactDefaultsToVanillaLayout() {
+        RegionRuns.Span span = new RegionRuns.Span(0, 320, 32, 60);
+
+        assertEquals(false, span.compact());
+    }
+
+    @Test
     void emptyInputProducesNoRuns() {
         assertTrue(RegionRuns.coalesce(0, List.of()).isEmpty());
     }

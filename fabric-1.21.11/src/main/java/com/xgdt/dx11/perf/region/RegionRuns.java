@@ -17,7 +17,11 @@ public final class RegionRuns {
     }
 
     /** One visible slice, in arena byte order. */
-    public record Span(long offset, long byteSize, int vertexStride, int indexCount) {
+    public record Span(
+        long offset, long byteSize, int vertexStride, int indexCount, boolean compact) {
+        public Span(long offset, long byteSize, int vertexStride, int indexCount) {
+            this(offset, byteSize, vertexStride, indexCount, false);
+        }
     }
 
     /**
@@ -27,7 +31,12 @@ public final class RegionRuns {
      * {@code indexCount} is the sum of the slices' index counts.</p>
      */
     public record Run(
-        int slot, long startOffset, int startVertex, int indexCount, int sliceCount) {
+        int slot,
+        long startOffset,
+        int startVertex,
+        int indexCount,
+        int sliceCount,
+        boolean compact) {
     }
 
     /**
@@ -46,6 +55,7 @@ public final class RegionRuns {
         int stride = 0;
         int indexCount = 0;
         int sliceCount = 0;
+        boolean compact = false;
 
         for (Span span : sortedSpans) {
             if (span.byteSize() <= 0 || span.indexCount() <= 0
@@ -53,14 +63,15 @@ public final class RegionRuns {
                 || span.offset() % span.vertexStride() != 0) {
                 // An unusable span still separates the spans around it; do not
                 // let a later span join across the hole.
-                addRun(runs, slot, startOffset, stride, indexCount, sliceCount);
+                addRun(runs, slot, startOffset, stride, indexCount, sliceCount, compact);
                 sliceCount = 0;
                 continue;
             }
 
             boolean joins = sliceCount > 0
                 && span.offset() == endOffset
-                && span.vertexStride() == stride;
+                && span.vertexStride() == stride
+                && span.compact() == compact;
             if (joins) {
                 endOffset += span.byteSize();
                 indexCount += span.indexCount();
@@ -68,14 +79,15 @@ public final class RegionRuns {
                 continue;
             }
 
-            addRun(runs, slot, startOffset, stride, indexCount, sliceCount);
+            addRun(runs, slot, startOffset, stride, indexCount, sliceCount, compact);
             startOffset = span.offset();
             endOffset = span.offset() + span.byteSize();
             stride = span.vertexStride();
             indexCount = span.indexCount();
             sliceCount = 1;
+            compact = span.compact();
         }
-        addRun(runs, slot, startOffset, stride, indexCount, sliceCount);
+        addRun(runs, slot, startOffset, stride, indexCount, sliceCount, compact);
         return runs;
     }
 
@@ -85,7 +97,8 @@ public final class RegionRuns {
         long startOffset,
         int stride,
         int indexCount,
-        int sliceCount) {
+        int sliceCount,
+        boolean compact) {
         if (sliceCount <= 0 || indexCount <= 0 || stride <= 0) {
             return;
         }
@@ -93,6 +106,6 @@ public final class RegionRuns {
         if (startVertex > Integer.MAX_VALUE) {
             return;
         }
-        runs.add(new Run(slot, startOffset, (int) startVertex, indexCount, sliceCount));
+        runs.add(new Run(slot, startOffset, (int) startVertex, indexCount, sliceCount, compact));
     }
 }

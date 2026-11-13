@@ -2,6 +2,7 @@ package com.xgdt.dx11.perf.region;
 
 import com.mojang.blaze3d.buffers.GpuBuffer;
 import com.mojang.blaze3d.buffers.GpuBufferSlice;
+import com.mojang.blaze3d.pipeline.RenderPipeline;
 import com.mojang.blaze3d.systems.RenderPass;
 import com.mojang.blaze3d.systems.RenderSystem;
 import com.mojang.blaze3d.vertex.VertexFormat;
@@ -99,7 +100,7 @@ public final class RegionSubmitter {
             && allRebased
             && singleLayer
             && (layer == ChunkSectionLayer.SOLID || layer == ChunkSectionLayer.CUTOUT)) {
-            if (submitRuns(pass, draws, uniformName)) {
+            if (submitRuns(pass, draws, uniformName, layer)) {
                 return true;
             }
         } else if (layer == ChunkSectionLayer.TRANSLUCENT
@@ -107,7 +108,7 @@ public final class RegionSubmitter {
             && allRebased
             && singleLayer
             && translucentRegionEnabled()) {
-            if (submitTranslucent(pass, draws, uniformName)) {
+            if (submitTranslucent(pass, draws, uniformName, layer)) {
                 return true;
             }
         }
@@ -119,12 +120,16 @@ public final class RegionSubmitter {
             defaultIndexType,
             uniformNames,
             uniformOwner,
-            uniformName);
+            uniformName,
+            layer);
         return true;
     }
 
     private static <T> boolean submitRuns(
-        RenderPass pass, Collection<RenderPass.Draw<T>> draws, String uniformName) {
+        RenderPass pass,
+        Collection<RenderPass.Draw<T>> draws,
+        String uniformName,
+        ChunkSectionLayer layer) {
         Map<GroupKey, List<RegionVertexSlice>> groups = new LinkedHashMap<>();
         for (RenderPass.Draw<T> draw : draws) {
             if (draw.vertexBuffer() instanceof RegionVertexSlice slice && !slice.isClosed()) {
@@ -148,7 +153,11 @@ public final class RegionSubmitter {
             List<RegionRuns.Span> spans = new ArrayList<>(slices.size());
             for (RegionVertexSlice slice : slices) {
                 spans.add(new RegionRuns.Span(
-                    slice.offset(), slice.byteSize(), slice.vertexStride(), slice.indexCount()));
+                    slice.offset(),
+                    slice.byteSize(),
+                    slice.vertexStride(),
+                    slice.indexCount(),
+                    slice.compact()));
             }
             List<RegionRuns.Run> runs = RegionRuns.coalesce(entry.getKey().slot(), spans);
             if (runs.isEmpty()) {
@@ -172,6 +181,7 @@ public final class RegionSubmitter {
 
         RegionBuffer boundBuffer = null;
         int boundSlot = -1;
+        RenderPipeline boundPipeline = null;
 
         // Every region draw in this layer uses the same sequential QUADS
         // index buffer, so bind it once for the whole list.
@@ -193,6 +203,18 @@ public final class RegionSubmitter {
             }
             pass.setUniform(uniformName, uniform);
             for (RegionRuns.Run run : plan.runs()) {
+                if (run.compact() && !PerfTerrainPipelines.isUsable(layer)) {
+                    // The compact layout cannot be drawn by the vanilla
+                    // pipeline; skip rather than binding an invalid pipeline.
+                    continue;
+                }
+                RenderPipeline wanted = run.compact()
+                    ? PerfTerrainPipelines.compact(layer)
+                    : layer.pipeline();
+                if (wanted != boundPipeline) {
+                    pass.setPipeline(wanted);
+                    boundPipeline = wanted;
+                }
                 PerfCounters.onRegionRun();
                 pass.drawIndexed(run.startVertex(), 0, run.indexCount(), 1);
             }
@@ -206,9 +228,13 @@ public final class RegionSubmitter {
      * draw list), so the region index buffer never references a hidden section.
      */
     private static <T> boolean submitTranslucent(
-        RenderPass pass, Collection<RenderPass.Draw<T>> draws, String uniformName) {
+        RenderPass pass,
+        Collection<RenderPass.Draw<T>> draws,
+        String uniformName,
+        ChunkSectionLayer layer) {
         Map<RegionBuffer, List<RegionVertexSlice>> groups = new LinkedHashMap<>();
         Map<RegionBuffer, Integer> slots = new LinkedHashMap<>();
+        Map<RegionBuffer, Boolean> compact = new LinkedHashMap<>();
 
         for (RenderPass.Draw<T> draw : draws) {
             if (!(draw.vertexBuffer() instanceof RegionVertexSlice slice)
@@ -219,6 +245,11 @@ public final class RegionSubmitter {
             Integer previousSlot = slots.putIfAbsent(buffer, draw.slot());
             if (previousSlot != null && previousSlot != draw.slot()) {
                 // One region index buffer cannot serve two vertex slots.
+                return false;
+            }
+            Boolean previousCompact = compact.putIfAbsent(buffer, slice.compact());
+            if (previousCompact != null && previousCompact != slice.compact()) {
+                // A single draw cannot mix vertex strides.
                 return false;
             }
             groups.computeIfAbsent(buffer, key -> new ArrayList<>()).add(slice);
@@ -237,8 +268,7 @@ public final class RegionSubmitter {
                 return false;
             }
             Region region = buffer.region();
-            RegionTranslucentIndex index =
-                region.getOrCreateTranslucentIndex(ChunkSectionLayer.TRANSLUCENT);
+            RegionTranslucentIndex index = region.getOrCreateTranslucentIndex(layer);
             if (index == null) {
                 return false;
             }
@@ -257,7 +287,12 @@ public final class RegionSubmitter {
                 return false;
             }
             plans.add(new TranslucentPlan(
-                buffer, slots.get(buffer), index, indexCount, uniform));
+                buffer,
+                slots.get(buffer),
+                compact.get(buffer),
+                index,
+                indexCount,
+                uniform));
         }
         if (plans.isEmpty()) {
             return true;
@@ -269,7 +304,18 @@ public final class RegionSubmitter {
             right.index.centerDistanceSquared(cameraX, cameraY, cameraZ),
             left.index.centerDistanceSquared(cameraX, cameraY, cameraZ)));
 
+        RenderPipeline boundPipeline = null;
         for (TranslucentPlan plan : plans) {
+            if (plan.compact && !PerfTerrainPipelines.isUsable(layer)) {
+                continue;
+            }
+            RenderPipeline wanted = plan.compact
+                ? PerfTerrainPipelines.compact(layer)
+                : layer.pipeline();
+            if (wanted != boundPipeline) {
+                pass.setPipeline(wanted);
+                boundPipeline = wanted;
+            }
             pass.setVertexBuffer(plan.slot, plan.buffer.gpuBuffer());
             pass.setUniform(uniformName, plan.uniform);
             pass.setIndexBuffer(plan.index.gpuBuffer(), VertexFormat.IndexType.INT);
@@ -295,16 +341,23 @@ public final class RegionSubmitter {
         VertexFormat.@Nullable IndexType defaultIndexType,
         Collection<String> uniformNames,
         T uniformOwner,
-        String uniformName) {
+        String uniformName,
+        @Nullable ChunkSectionLayer listLayer) {
         RegionBuffer boundRegion = null;
         int boundSlot = -1;
         GpuBuffer boundIndex = null;
         VertexFormat.IndexType boundIndexType = null;
+        RenderPipeline boundPipeline = null;
 
         for (RenderPass.Draw<T> draw : draws) {
             if (!(draw.vertexBuffer() instanceof RegionVertexSlice slice)) {
                 // Mixed/fallback list: let vanilla bind its own buffers and
-                // upload the per-section uniform for this draw.
+                // upload the per-section uniform for this draw.  Restore the
+                // layer pipeline in case the previous draw used compact data.
+                if (listLayer != null && boundPipeline != listLayer.pipeline()) {
+                    pass.setPipeline(listLayer.pipeline());
+                    boundPipeline = listLayer.pipeline();
+                }
                 pass.drawMultipleIndexed(
                     List.of(draw), defaultIndexBuffer, defaultIndexType, uniformNames, uniformOwner);
                 boundRegion = null;
@@ -317,6 +370,17 @@ public final class RegionSubmitter {
                 // The section was dropped between draw-list construction and
                 // submission; its arena slice is already gone.
                 continue;
+            }
+
+            if (slice.compact() && !PerfTerrainPipelines.isUsable(slice.layer())) {
+                continue;
+            }
+            RenderPipeline wanted = slice.compact()
+                ? PerfTerrainPipelines.compact(slice.layer())
+                : slice.layer().pipeline();
+            if (wanted != boundPipeline) {
+                pass.setPipeline(wanted);
+                boundPipeline = wanted;
             }
 
             RegionBuffer regionBuffer = slice.regionBuffer();
@@ -380,6 +444,7 @@ public final class RegionSubmitter {
     private record TranslucentPlan(
         RegionBuffer buffer,
         int slot,
+        boolean compact,
         RegionTranslucentIndex index,
         int indexCount,
         GpuBufferSlice uniform) {

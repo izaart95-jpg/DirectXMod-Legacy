@@ -11,6 +11,9 @@ class PerfCommandTest {
         assertTrue(PerfCommand.requiresChunkRebuild("/dx11perf toggle"));
         assertTrue(PerfCommand.requiresChunkRebuild("/dx11perf toggle regionUpload"));
         assertTrue(PerfCommand.requiresChunkRebuild("dx11perf toggle regionDraws"));
+        assertTrue(PerfCommand.requiresChunkRebuild("/dx11perf toggle compact"));
+        assertTrue(PerfCommand.requiresChunkRebuild("/dx11perf toggle compactVerticesForce"));
+        assertTrue(PerfCommand.requiresChunkRebuild("/dx11perf toggle translucentRegion"));
         assertTrue(PerfCommand.requiresChunkRebuild("/dx11perf regionSize REGION_4"));
         assertTrue(PerfCommand.requiresChunkRebuild("/dx11perf reload"));
     }

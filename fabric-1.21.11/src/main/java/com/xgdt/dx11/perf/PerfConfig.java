@@ -60,7 +60,11 @@ public final class PerfConfig {
     public int regionArenaLimitMb = 256;
 
     public boolean compactVertices = false;
-    /** Force compact vertices even when a resource pack overrides terrain shaders. */
+    /**
+     * Attempt compact vertices even when the vanilla terrain interface looked
+     * incompatible.  The compiled shader is still validated: a pack that
+     * actually reads normal/other dropped inputs keeps 32-byte vertices.
+     */
     public boolean compactVerticesForce = false;
     public int compactPositionBits = 16;
 

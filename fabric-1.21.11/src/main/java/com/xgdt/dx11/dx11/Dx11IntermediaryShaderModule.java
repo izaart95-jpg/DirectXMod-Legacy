@@ -67,6 +67,17 @@ final class Dx11IntermediaryShaderModule implements AutoCloseable {
         return this.inputs;
     }
 
+    /** Names of stage inputs that the compiled shader actually reads. */
+    Set<String> usedInputNames() {
+        Set<String> names = new HashSet<>();
+        for (SpvVariable input : this.inputs) {
+            if (input.used()) {
+                names.add(input.name());
+            }
+        }
+        return names;
+    }
+
     List<SpvVariable> outputs() {
         return this.outputs;
     }
