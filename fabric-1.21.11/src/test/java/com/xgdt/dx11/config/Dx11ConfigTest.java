@@ -3,6 +3,7 @@ package com.xgdt.dx11.config;
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -13,7 +14,6 @@ import org.junit.jupiter.api.Test;
 class Dx11ConfigTest {
     private String originalOsName;
     private String originalBackend;
-    private String originalEnabled;
     private String originalDebug;
     private String originalMaxFeatureLevel;
 
@@ -21,7 +21,6 @@ class Dx11ConfigTest {
     void saveProperties() {
         originalOsName = System.getProperty("os.name");
         originalBackend = System.getProperty(Dx11Config.BACKEND_PROPERTY);
-        originalEnabled = System.getProperty(Dx11Config.ENABLE_PROPERTY);
         originalDebug = System.getProperty(Dx11Config.DEBUG_PROPERTY);
         originalMaxFeatureLevel = System.getProperty(Dx11Config.MAX_FEATURE_LEVEL_PROPERTY);
         Dx11Config.resetProbeState();
@@ -31,7 +30,6 @@ class Dx11ConfigTest {
     void restoreProperties() {
         restore("os.name", originalOsName);
         restore(Dx11Config.BACKEND_PROPERTY, originalBackend);
-        restore(Dx11Config.ENABLE_PROPERTY, originalEnabled);
         restore(Dx11Config.DEBUG_PROPERTY, originalDebug);
         restore(Dx11Config.MAX_FEATURE_LEVEL_PROPERTY, originalMaxFeatureLevel);
         Dx11Config.resetProbeState();
@@ -82,18 +80,21 @@ class Dx11ConfigTest {
     void nonWindowsNeverUsesDx11() {
         System.setProperty("os.name", "Linux");
         System.setProperty(Dx11Config.BACKEND_PROPERTY, "dx11");
-        System.setProperty(Dx11Config.ENABLE_PROPERTY, "true");
         assertFalse(Dx11Config.shouldUseDx11());
+        assertEquals("not run", Dx11Config.probeResult());
     }
 
     @Test
-    void probeIsNotRunWhenTheBackendIsNotEnabled() {
+    void probeRunsAutomaticallyOnWindows() {
         System.setProperty("os.name", "Windows 10");
         System.setProperty(Dx11Config.BACKEND_PROPERTY, "dx11");
-        System.clearProperty(Dx11Config.ENABLE_PROPERTY);
+        System.clearProperty(Dx11Config.MAX_FEATURE_LEVEL_PROPERTY);
 
+        // No enable property exists: the probe must be attempted anyway.  The
+        // unit-test JVM has no Windows DLL, so the probe fails and the game
+        // falls back to OpenGL.
         assertFalse(Dx11Config.shouldUseDx11());
-        assertEquals("not run", Dx11Config.probeResult());
+        assertNotEquals("not run", Dx11Config.probeResult());
     }
 
     @Test

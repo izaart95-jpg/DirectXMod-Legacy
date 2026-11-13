@@ -14,7 +14,7 @@ import org.slf4j.LoggerFactory;
  * <ol>
  *   <li>it is enabled in {@code config/gl4dx11-perf.json} (or via
  *       {@code -Dgl4dx11.perf.enabled=true}),</li>
- *   <li>the D3D11 backend was explicitly enabled and probed successfully,</li>
+ *   <li>the D3D11 backend probed successfully,</li>
  *   <li>the game is running on Windows (the D3D11 backend is Windows-only).</li>
  * </ol>
  *

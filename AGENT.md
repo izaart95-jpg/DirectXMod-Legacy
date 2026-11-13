@@ -6,8 +6,8 @@ Notes for coding agents working in this repository.
 
 A Direct3D 11 backend for Minecraft: Java Edition, built as a Fabric mod. The
 goal is to run modern Minecraft on GPUs that top out at DirectX 10.1, such as
-the Intel HD Graphics 3000. OpenGL remains the fallback whenever the D3D11
-probe fails or the backend is not explicitly enabled.
+the Intel HD Graphics 3000. OpenGL remains the fallback whenever the D3D11 probe fails or the backend is
+explicitly disabled with `-Dgl4dx12.backend=gl`.
 
 This work is inspired by and derived from the original DirectXMod project:
 
@@ -60,13 +60,15 @@ packages `dx11_mc.dll` from `native-dx11\build\bin` when present.
 Development client:
 
 ```bat
-set "JAVA_TOOL_OPTIONS=-Dgl4dx12.dx11.enabled=true -Dgl4dx11.nativePath=C:\path\to\native-dx11\build\bin\Release\dx11_mc.dll"
+set "JAVA_TOOL_OPTIONS=-Dgl4dx11.nativePath=C:\path\to\native-dx11\build\bin\Release\dx11_mc.dll"
 cd fabric-1.21.11
 gradlew.bat runClient
 ```
 
 `JAVA_TOOL_OPTIONS` is used because Loom's `runClient` does not forward `-D`
-flags from the Gradle command line to the game JVM.
+flags from the Gradle command line to the game JVM. The backend activates
+automatically on Windows once the probe succeeds; the path override is only
+needed for a development DLL that is not packaged in the jar.
 
 Probe only:
 
@@ -74,15 +76,17 @@ Probe only:
 gradlew.bat runDx11Probe -Dgl4dx11.nativePath=..\native-dx11\build\bin\Release\dx11_mc.dll
 ```
 
-Normal launcher install: copy `gl4dx11-0.1.0.jar` into `.minecraft\mods` and
-add `-Dgl4dx12.dx11.enabled=true` to the launcher JVM arguments.
+Normal launcher install: copy `gl4dx11-0.1.0.jar` into `.minecraft\mods`.
+The backend is used automatically on Windows when the packaged DLL probes
+successfully. To force the vanilla OpenGL path, add `-Dgl4dx12.backend=gl` to
+the launcher JVM arguments.
 
 ## How it works
 
-- The backend is opt-in. `Dx11Config.shouldUseDx11()` runs a native probe at
-  startup; the D3D11 device is only installed when the probe succeeds and
-  `-Dgl4dx12.dx11.enabled=true` is set. Otherwise the vanilla OpenGL path runs
-  unchanged.
+- The backend is selected automatically on Windows. `Dx11Config.shouldUseDx11()`
+  runs a native probe at startup; the D3D11 device is installed when the probe
+  succeeds. If the DLL is missing or the probe fails, the vanilla OpenGL path
+  runs unchanged. `-Dgl4dx12.backend=gl` is the explicit opt-out.
 - `WindowMixin` creates the GLFW window with `GLFW_NO_API`; `RenderSystemMixin`
   replaces `GlDevice` with `Dx11Device` and routes `flipFrame`/vsync to the
   D3D11 swapchain.

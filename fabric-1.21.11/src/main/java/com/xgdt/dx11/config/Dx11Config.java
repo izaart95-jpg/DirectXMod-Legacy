@@ -8,16 +8,16 @@ import org.slf4j.LoggerFactory;
 /**
  * Early, dependency-free configuration for the D3D11 backport.
  *
- * <p>The backend is opt-in: without {@link #ENABLE_PROPERTY} no native
- * library is loaded and the vanilla OpenGL path is untouched.</p>
+ * <p>The backend is selected automatically on Windows: the native library is
+ * probed at startup and installed only when the probe succeeds.  A missing DLL
+ * or a failed probe leaves the vanilla OpenGL path untouched.  Set
+ * {@link #BACKEND_PROPERTY} to {@code gl} for an explicit opt-out.</p>
  */
 public final class Dx11Config {
     private static final Logger LOGGER = LoggerFactory.getLogger("gl4dx11");
 
     /** auto | dx11 | gl */
     public static final String BACKEND_PROPERTY = "gl4dx12.backend";
-    /** Safety gate for the still-incomplete backend. */
-    public static final String ENABLE_PROPERTY = "gl4dx12.dx11.enabled";
     /**
      * Optional feature-level clamp used to validate the FL10.x path on a WARP
      * device that would otherwise report a higher level.  Accepted forms:
@@ -168,14 +168,11 @@ public final class Dx11Config {
     }
 
     /**
-     * True only when the user explicitly enabled the backend and the native
-     * probe succeeded. The property is checked before the probe so a normal
-     * launch never loads {@code dx11_mc.dll} or creates a D3D11 device.
+     * True when the platform and backend selection allow D3D11 and the native
+     * probe succeeded.  The probe runs automatically on Windows; a missing DLL
+     * or a failed probe returns false so the vanilla OpenGL path stays in use.
      */
     public static boolean shouldUseDx11() {
-        if (!Boolean.getBoolean(ENABLE_PROPERTY)) {
-            return false;
-        }
         if (!isDx11Requested()) {
             return false;
         }

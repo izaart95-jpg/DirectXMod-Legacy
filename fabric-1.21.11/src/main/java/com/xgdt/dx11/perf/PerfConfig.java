@@ -16,11 +16,11 @@ import java.util.List;
  * Persistent configuration for the experimental D3D11 region renderer.
  *
  * <p>The file is deliberately separate from the early system-property
- * configuration in {@code Dx11Config}: the backend itself remains opt-in via
- * {@code -Dgl4dx12.dx11.enabled=true}, while this file controls the perf layer
- * and can be edited while the game is closed.  A missing file is created with
- * conservative defaults; an unreadable/corrupt file falls back to defaults and
- * leaves the original file untouched so it can be inspected.</p>
+ * configuration in {@code Dx11Config}: the backend is selected automatically
+ * on Windows when the native probe succeeds, while this file controls the perf
+ * layer and can be edited while the game is closed.  A missing file is created
+ * with conservative defaults; an unreadable/corrupt file falls back to defaults
+ * and leaves the original file untouched so it can be inspected.</p>
  */
 public final class PerfConfig {
     public static final String FILE_NAME = "gl4dx11-perf.json";
