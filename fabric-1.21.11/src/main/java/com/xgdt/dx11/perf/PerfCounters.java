@@ -19,6 +19,7 @@ public final class PerfCounters {
     private static final AtomicLong RENDER_PASSES = new AtomicLong();
     private static final AtomicLong UPLOADS = new AtomicLong();
     private static final AtomicLong UPLOAD_BYTES = new AtomicLong();
+    private static final AtomicLong REGION_RUNS = new AtomicLong();
     private static volatile boolean enabled;
 
     private PerfCounters() {
@@ -62,6 +63,12 @@ public final class PerfCounters {
         }
     }
 
+    public static void onRegionRun() {
+        if (enabled) {
+            REGION_RUNS.incrementAndGet();
+        }
+    }
+
     public static void onUpload(long bytes) {
         if (enabled) {
             UPLOADS.incrementAndGet();
@@ -79,7 +86,8 @@ public final class PerfCounters {
             UNIFORM_BINDS.get(),
             RENDER_PASSES.get(),
             UPLOADS.get(),
-            UPLOAD_BYTES.get());
+            UPLOAD_BYTES.get(),
+            REGION_RUNS.get());
     }
 
     public static void reset() {
@@ -90,6 +98,7 @@ public final class PerfCounters {
         RENDER_PASSES.set(0);
         UPLOADS.set(0);
         UPLOAD_BYTES.set(0);
+        REGION_RUNS.set(0);
     }
 
     /** Immutable counter snapshot. */
@@ -100,7 +109,8 @@ public final class PerfCounters {
         long uniformBinds,
         long renderPasses,
         long uploads,
-        long uploadBytes) {
+        long uploadBytes,
+        long regionRuns) {
 
         public Snapshot delta(Snapshot earlier) {
             return new Snapshot(
@@ -110,7 +120,8 @@ public final class PerfCounters {
                 this.uniformBinds - earlier.uniformBinds,
                 this.renderPasses - earlier.renderPasses,
                 this.uploads - earlier.uploads,
-                this.uploadBytes - earlier.uploadBytes);
+                this.uploadBytes - earlier.uploadBytes,
+                this.regionRuns - earlier.regionRuns);
         }
 
         public double uploadMiB() {
@@ -124,7 +135,8 @@ public final class PerfCounters {
                 + " uniforms=" + this.uniformBinds
                 + " passes=" + this.renderPasses
                 + " uploads=" + this.uploads
-                + " uploadBytes=" + this.uploadBytes;
+                + " uploadBytes=" + this.uploadBytes
+                + " runs=" + this.regionRuns;
         }
     }
 }

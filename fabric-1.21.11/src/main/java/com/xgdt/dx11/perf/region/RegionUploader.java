@@ -2,10 +2,12 @@ package com.xgdt.dx11.perf.region;
 
 import com.mojang.blaze3d.vertex.MeshData;
 import com.mojang.blaze3d.vertex.VertexFormat;
+import com.mojang.blaze3d.vertex.VertexFormatElement;
 import com.xgdt.dx11.mixin.CompiledSectionMeshAccessor;
 import com.xgdt.dx11.perf.PerfConfig;
 import com.xgdt.dx11.perf.PerfState;
 import java.nio.ByteBuffer;
+import java.nio.ByteOrder;
 import java.util.Collection;
 import java.util.Map;
 import net.minecraft.client.renderer.chunk.ChunkSectionLayer;
@@ -23,10 +25,16 @@ import org.slf4j.LoggerFactory;
  * {@link ChunkSectionLayer#CUTOUT}.  Translucent/tripwire layers keep vanilla
  * per-section buffers and vanilla sorting.  Every {@link MeshData} is closed
  * exactly once, whether the region path or the vanilla fallback ran.</p>
+ *
+ * <p>When region draws are enabled the vertex positions are rebased from the
+ * section origin to the region origin, so several sections can share one
+ * region uniform and be drawn as contiguous runs.</p>
  */
 public final class RegionUploader {
     private static final Logger LOGGER = LoggerFactory.getLogger("gl4dx11");
     private static final long WARN_INTERVAL_NANOS = 10_000_000_000L;
+    private static final ThreadLocal<ByteBuffer> REBASE_SCRATCH =
+        ThreadLocal.withInitial(() -> ByteBuffer.allocateDirect(4096).order(ByteOrder.nativeOrder()));
     private static long lastWarnNanos;
 
     private RegionUploader() {
@@ -73,7 +81,7 @@ public final class RegionUploader {
             boolean vanillaAttempted = false;
             try {
                 if (isOpaque(layer)) {
-                    uploadedToRegion = uploadOpaque(region, layer, data, mesh);
+                    uploadedToRegion = uploadOpaque(region, layer, data, mesh, origin);
                 }
                 if (!uploadedToRegion) {
                     vanillaAttempted = true;
@@ -104,7 +112,8 @@ public final class RegionUploader {
         Region region,
         ChunkSectionLayer layer,
         MeshData data,
-        CompiledSectionMesh mesh) {
+        CompiledSectionMesh mesh,
+        BlockPos sectionOrigin) {
         MeshData.DrawState draw = data.drawState();
         VertexFormat format = draw.format();
         // Region submission uses the shared sequential QUADS index buffer, so
@@ -121,6 +130,26 @@ public final class RegionUploader {
 
         if (stride <= 0 || byteSize <= 0 || byteSize % stride != 0) {
             return false;
+        }
+
+        boolean regionRelative = PerfState.config().regionDraws;
+        if (regionRelative) {
+            int vertexCount = byteSize / stride;
+            if (vertexCount % 4 != 0 || draw.indexCount() != vertexCount / 4 * 6) {
+                // Coalescing treats neighbouring slices as one vertex stream,
+                // so a mesh that is not a whole number of quads cannot join a
+                // run.
+                return false;
+            }
+        }
+        int positionOffset = -1;
+        if (regionRelative) {
+            positionOffset = positionOffset(format);
+            if (positionOffset < 0) {
+                // A custom/unknown terrain format: keep per-section buffers
+                // rather than drawing it against the wrong uniform.
+                return false;
+            }
         }
 
         RegionBuffer regionBuffer = region.getBuffer(layer);
@@ -144,9 +173,42 @@ public final class RegionUploader {
 
         RegionVertexSlice slice = null;
         try {
-            slice = new RegionVertexSlice(
-                regionBuffer, allocation.offset(), byteSize, stride, draw.indexCount());
-            regionBuffer.write(allocation, vertices);
+            if (regionRelative) {
+                ByteBuffer scratch = scratch(byteSize);
+                int deltaX = sectionOrigin.getX() - region.originBlockX();
+                int deltaY = sectionOrigin.getY() - region.originBlockY();
+                int deltaZ = sectionOrigin.getZ() - region.originBlockZ();
+                RegionVertexRebase.rebase(
+                    vertices,
+                    scratch,
+                    byteSize,
+                    stride,
+                    positionOffset,
+                    deltaX,
+                    deltaY,
+                    deltaZ);
+                slice = new RegionVertexSlice(
+                    regionBuffer,
+                    allocation.offset(),
+                    byteSize,
+                    stride,
+                    draw.indexCount(),
+                    byteSize / stride,
+                    layer,
+                    true);
+                regionBuffer.write(allocation, scratch);
+            } else {
+                slice = new RegionVertexSlice(
+                    regionBuffer,
+                    allocation.offset(),
+                    byteSize,
+                    stride,
+                    draw.indexCount(),
+                    byteSize / stride,
+                    layer,
+                    false);
+                regionBuffer.write(allocation, vertices);
+            }
 
             Map<ChunkSectionLayer, SectionBuffers> buffers =
                 ((CompiledSectionMeshAccessor) (Object) mesh).dx11$getBuffers();
@@ -165,6 +227,37 @@ public final class RegionUploader {
             }
             throw e;
         }
+    }
+
+    /**
+     * Finds the byte offset of a three-float position element.  Returns -1 for
+     * layouts the rebase cannot handle; those keep vanilla buffers.
+     */
+    static int positionOffset(VertexFormat format) {
+        VertexFormatElement position = null;
+        for (VertexFormatElement element : format.getElements()) {
+            if (element.usage() == VertexFormatElement.Usage.POSITION) {
+                if (position != null) {
+                    return -1;
+                }
+                position = element;
+            }
+        }
+        if (position == null
+            || position.type() != VertexFormatElement.Type.FLOAT
+            || position.count() != 3) {
+            return -1;
+        }
+        return format.getOffset(position);
+    }
+
+    private static ByteBuffer scratch(int byteSize) {
+        ByteBuffer scratch = REBASE_SCRATCH.get();
+        if (scratch.capacity() < byteSize) {
+            scratch = ByteBuffer.allocateDirect(byteSize).order(ByteOrder.nativeOrder());
+            REBASE_SCRATCH.set(scratch);
+        }
+        return scratch;
     }
 
     /**

@@ -15,7 +15,7 @@ import org.slf4j.LoggerFactory;
 public final class PerfDebugLog {
     private static final Logger LOGGER = LoggerFactory.getLogger("gl4dx11");
     private static volatile long lastLogNanos;
-    private static volatile PerfCounters.Snapshot lastSnapshot = new PerfCounters.Snapshot(0, 0, 0, 0, 0, 0, 0);
+    private static volatile PerfCounters.Snapshot lastSnapshot = new PerfCounters.Snapshot(0, 0, 0, 0, 0, 0, 0, 0);
 
     private PerfDebugLog() {
     }

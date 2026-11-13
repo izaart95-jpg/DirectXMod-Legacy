@@ -94,6 +94,7 @@ public final class RegionManager {
      * arenas close as soon as their slices are freed.
      */
     public static void clear() {
+        RegionFrame.reset();
         List<Region> copy = new ArrayList<>(REGIONS.values());
         REGIONS.clear();
         for (Region region : copy) {
@@ -103,6 +104,7 @@ public final class RegionManager {
 
     /** Force-closes every region.  Used on renderer disposal. */
     public static void closeAll() {
+        RegionFrame.reset();
         List<Region> copy = new ArrayList<>(REGIONS.values());
         REGIONS.clear();
         for (Region region : copy) {
