@@ -25,6 +25,7 @@ public final class RegionVertexSlice extends GpuBuffer {
     private final ChunkSectionLayer layer;
     private final boolean regionRelative;
     private final int startVertex;
+    private final float[] centroids;
     private boolean closed;
 
     RegionVertexSlice(
@@ -35,11 +36,15 @@ public final class RegionVertexSlice extends GpuBuffer {
         int indexCount,
         int vertexCount,
         ChunkSectionLayer layer,
-        boolean regionRelative) {
+        boolean regionRelative,
+        float[] centroids) {
         super(USAGE_VERTEX | USAGE_COPY_DST, byteSize);
         if (offset < 0 || byteSize <= 0 || vertexStride <= 0 || indexCount < 0
             || vertexCount < 0) {
             throw new IllegalArgumentException("Invalid region vertex slice");
+        }
+        if (centroids != null && centroids.length % 3 != 0) {
+            throw new IllegalArgumentException("Translucent centroids must be XYZ triples");
         }
         long start = offset / vertexStride;
         if (start > Integer.MAX_VALUE) {
@@ -54,6 +59,7 @@ public final class RegionVertexSlice extends GpuBuffer {
         this.layer = layer;
         this.regionRelative = regionRelative;
         this.startVertex = (int) start;
+        this.centroids = centroids;
         regionBuffer.region().retainSlice();
         liveSlices++;
         if (regionRelative) {
@@ -97,6 +103,19 @@ public final class RegionVertexSlice extends GpuBuffer {
     /** First vertex of this slice relative to the region arena. */
     public int startVertex() {
         return this.startVertex;
+    }
+
+    /**
+     * Region-local XYZ centroid per quad, or {@code null} for opaque slices.
+     * The returned array is read-only by convention and owned by the slice.
+     */
+    public float[] centroids() {
+        return this.centroids;
+    }
+
+    /** Number of quads in a translucent slice; zero for opaque slices. */
+    public int quadCount() {
+        return this.centroids == null ? 0 : this.centroids.length / 3;
     }
 
     /** Number of live rebased slices; guards the per-frame region uniforms. */

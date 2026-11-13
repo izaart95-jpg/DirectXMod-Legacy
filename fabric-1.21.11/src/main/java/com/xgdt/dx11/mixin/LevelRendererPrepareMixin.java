@@ -31,7 +31,7 @@ public class LevelRendererPrepareMixin {
         double cameraY,
         double cameraZ,
         CallbackInfoReturnable<ChunkSectionsToRender> cir) {
-        RegionFrame.begin(modelView);
+        RegionFrame.begin(modelView, cameraX, cameraY, cameraZ);
     }
 
     @Inject(method = "prepareChunkRenders", at = @At("RETURN"))

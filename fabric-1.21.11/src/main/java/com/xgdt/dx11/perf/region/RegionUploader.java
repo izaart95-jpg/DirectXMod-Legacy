@@ -1,5 +1,8 @@
 package com.xgdt.dx11.perf.region;
 
+import com.mojang.blaze3d.buffers.GpuBuffer;
+import com.mojang.blaze3d.systems.RenderSystem;
+import com.mojang.blaze3d.vertex.CompactVectorArray;
 import com.mojang.blaze3d.vertex.MeshData;
 import com.mojang.blaze3d.vertex.VertexFormat;
 import com.mojang.blaze3d.vertex.VertexFormatElement;
@@ -10,6 +13,7 @@ import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
 import java.util.Collection;
 import java.util.Map;
+import java.util.function.Supplier;
 import net.minecraft.client.renderer.chunk.ChunkSectionLayer;
 import net.minecraft.client.renderer.chunk.CompiledSectionMesh;
 import net.minecraft.client.renderer.chunk.SectionBuffers;
@@ -22,17 +26,22 @@ import org.slf4j.LoggerFactory;
  *
  * <p>The vanilla render-thread upload body is replaced at HEAD; this class
  * reimplements it for {@link ChunkSectionLayer#SOLID} and
- * {@link ChunkSectionLayer#CUTOUT}.  Translucent/tripwire layers keep vanilla
- * per-section buffers and vanilla sorting.  Every {@link MeshData} is closed
+ * {@link ChunkSectionLayer#CUTOUT}, plus translucent terrain when
+ * {@code translucentRegion} is enabled.  Translucent slices also keep a sorted
+ * per-section index buffer so a mixed/fallback list still renders in vanilla
+ * order.  Tripwire keeps vanilla buffers.  Every {@link MeshData} is closed
  * exactly once, whether the region path or the vanilla fallback ran.</p>
  *
  * <p>When region draws are enabled the vertex positions are rebased from the
  * section origin to the region origin, so several sections can share one
- * region uniform and be drawn as contiguous runs.</p>
+ * region uniform and be drawn as contiguous runs.  Translucent slices store
+ * region-local quad centroids for the per-region sort.</p>
  */
 public final class RegionUploader {
     private static final Logger LOGGER = LoggerFactory.getLogger("gl4dx11");
     private static final long WARN_INTERVAL_NANOS = 10_000_000_000L;
+    private static final Supplier<String> TRANSLUCENT_INDEX_NAME =
+        () -> "dx11 translucent section indices";
     private static final ThreadLocal<ByteBuffer> REBASE_SCRATCH =
         ThreadLocal.withInitial(() -> ByteBuffer.allocateDirect(4096).order(ByteOrder.nativeOrder()));
     private static long lastWarnNanos;
@@ -82,6 +91,8 @@ public final class RegionUploader {
             try {
                 if (isOpaque(layer)) {
                     uploadedToRegion = uploadOpaque(region, layer, data, mesh, origin);
+                } else if (isTranslucentRegion(layer, config)) {
+                    uploadedToRegion = uploadTranslucent(region, layer, data, mesh, origin);
                 }
                 if (!uploadedToRegion) {
                     vanillaAttempted = true;
@@ -195,7 +206,8 @@ public final class RegionUploader {
                     draw.indexCount(),
                     byteSize / stride,
                     layer,
-                    true);
+                    true,
+                    null);
                 regionBuffer.write(allocation, scratch);
             } else {
                 slice = new RegionVertexSlice(
@@ -206,7 +218,8 @@ public final class RegionUploader {
                     draw.indexCount(),
                     byteSize / stride,
                     layer,
-                    false);
+                    false,
+                    null);
                 regionBuffer.write(allocation, vertices);
             }
 
@@ -220,6 +233,131 @@ public final class RegionUploader {
             }
             return true;
         } catch (RuntimeException e) {
+            if (slice != null) {
+                slice.close();
+            } else {
+                regionBuffer.free(allocation.offset(), allocation.size());
+            }
+            throw e;
+        }
+    }
+
+    /**
+     * Copies a translucent mesh into the region arena and records region-local
+     * quad centroids.  The mesh's vanilla sorted index buffer is uploaded too:
+     * region submission normally ignores it, but a mixed/fallback list can
+     * still draw the section correctly with vanilla ordering.
+     */
+    private static boolean uploadTranslucent(
+        Region region,
+        ChunkSectionLayer layer,
+        MeshData data,
+        CompiledSectionMesh mesh,
+        BlockPos sectionOrigin) {
+        MeshData.DrawState draw = data.drawState();
+        VertexFormat format = draw.format();
+        if (draw.mode() != VertexFormat.Mode.QUADS
+            || draw.indexCount() <= 0
+            || data.indexBuffer() == null) {
+            return false;
+        }
+        MeshData.SortState sortState = mesh.getTransparencyState();
+        if (sortState == null) {
+            return false;
+        }
+        CompactVectorArray centroids = sortState.centroids();
+
+        int stride = format.getVertexSize();
+        ByteBuffer vertices = data.vertexBuffer();
+        int byteSize = vertices.remaining();
+        if (stride <= 0 || byteSize <= 0 || byteSize % stride != 0) {
+            return false;
+        }
+        int vertexCount = byteSize / stride;
+        if (vertexCount % 4 != 0) {
+            return false;
+        }
+        int quadCount = vertexCount / 4;
+        if (draw.indexCount() != quadCount * 6 || centroids.size() != quadCount) {
+            return false;
+        }
+        int positionOffset = positionOffset(format);
+        if (positionOffset < 0) {
+            return false;
+        }
+
+        RegionBuffer regionBuffer = region.getBuffer(layer);
+        if (regionBuffer == null) {
+            return false;
+        }
+        long alignment = Math.max(4, stride);
+        RegionAllocator.Allocation allocation = regionBuffer.allocate(byteSize, alignment);
+        if (allocation == null) {
+            return false;
+        }
+        if (allocation.offset() % stride != 0) {
+            regionBuffer.free(allocation.offset(), allocation.size());
+            return false;
+        }
+
+        int deltaX = sectionOrigin.getX() - region.originBlockX();
+        int deltaY = sectionOrigin.getY() - region.originBlockY();
+        int deltaZ = sectionOrigin.getZ() - region.originBlockZ();
+        float[] regionCentroids = new float[quadCount * 3];
+        for (int quad = 0; quad < quadCount; quad++) {
+            int offset = quad * 3;
+            regionCentroids[offset] = centroids.getX(quad) + deltaX;
+            regionCentroids[offset + 1] = centroids.getY(quad) + deltaY;
+            regionCentroids[offset + 2] = centroids.getZ(quad) + deltaZ;
+        }
+
+        RegionVertexSlice slice = null;
+        GpuBuffer indexBuffer = null;
+        try {
+            ByteBuffer scratch = scratch(byteSize);
+            RegionVertexRebase.rebase(
+                vertices,
+                scratch,
+                byteSize,
+                stride,
+                positionOffset,
+                deltaX,
+                deltaY,
+                deltaZ);
+            slice = new RegionVertexSlice(
+                regionBuffer,
+                allocation.offset(),
+                byteSize,
+                stride,
+                draw.indexCount(),
+                vertexCount,
+                layer,
+                true,
+                regionCentroids);
+            regionBuffer.write(allocation, scratch);
+
+            indexBuffer = RenderSystem.getDevice().createBuffer(
+                TRANSLUCENT_INDEX_NAME,
+                GpuBuffer.USAGE_INDEX | GpuBuffer.USAGE_COPY_DST,
+                data.indexBuffer());
+
+            Map<ChunkSectionLayer, SectionBuffers> buffers =
+                ((CompiledSectionMeshAccessor) (Object) mesh).dx11$getBuffers();
+            SectionBuffers previous = buffers.put(
+                layer,
+                new SectionBuffers(slice, indexBuffer, draw.indexCount(), draw.indexType()));
+            if (previous != null) {
+                closeBuffers(previous);
+            }
+            return true;
+        } catch (RuntimeException e) {
+            if (indexBuffer != null) {
+                try {
+                    indexBuffer.close();
+                } catch (RuntimeException ignored) {
+                    // Already released.
+                }
+            }
             if (slice != null) {
                 slice.close();
             } else {
@@ -300,6 +438,17 @@ public final class RegionUploader {
 
     private static boolean isOpaque(ChunkSectionLayer layer) {
         return layer == ChunkSectionLayer.SOLID || layer == ChunkSectionLayer.CUTOUT;
+    }
+
+    /**
+     * Translucent slices are only rebased when region draws are on: the
+     * region-relative vertices need the per-region uniform, which also covers
+     * the translucent layer.
+     */
+    private static boolean isTranslucentRegion(ChunkSectionLayer layer, PerfConfig config) {
+        return layer == ChunkSectionLayer.TRANSLUCENT
+            && config.translucentRegion
+            && config.regionDraws;
     }
 
     private static void warn(String message) {

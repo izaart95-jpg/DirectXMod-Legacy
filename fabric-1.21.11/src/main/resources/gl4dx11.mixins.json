@@ -12,6 +12,7 @@
     "PerfCommandMixin",
     "RenderSectionUploadMixin",
     "RenderSystemMixin",
+    "ScheduleResortMixin",
     "SectionRenderDispatcherMixin",
     "VertexFormatBuilderMixin",
     "WindowMixin"

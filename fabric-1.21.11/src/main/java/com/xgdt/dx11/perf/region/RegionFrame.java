@@ -36,6 +36,9 @@ public final class RegionFrame {
     private static int atlasWidth;
     private static int atlasHeight;
     private static boolean recording;
+    private static double cameraX;
+    private static double cameraY;
+    private static double cameraZ;
     private static long lastMissingWarnNanos;
 
     private RegionFrame() {
@@ -46,8 +49,13 @@ public final class RegionFrame {
      * when rebased slices from a previous mode are still alive, so the default
      * (non-region) path pays nothing.
      */
-    public static void begin(Matrix4fc modelView) {
+    public static void begin(
+        Matrix4fc modelView, double viewX, double viewY, double viewZ) {
         reset();
+        cameraX = viewX;
+        cameraY = viewY;
+        cameraZ = viewZ;
+        RegionTranslucentSorter.beginFrame();
         boolean needed;
         try {
             PerfConfig config = PerfState.config();
@@ -62,6 +70,19 @@ public final class RegionFrame {
         matrix = new Matrix4f(modelView);
         regionSize = PerfState.config().regionSize();
         recording = true;
+    }
+
+    /** Camera X captured at the start of the frame's chunk preparation. */
+    public static double cameraX() {
+        return cameraX;
+    }
+
+    public static double cameraY() {
+        return cameraY;
+    }
+
+    public static double cameraZ() {
+        return cameraZ;
     }
 
     /**
@@ -164,6 +185,9 @@ public final class RegionFrame {
         regionSize = null;
         atlasWidth = 0;
         atlasHeight = 0;
+        cameraX = 0.0;
+        cameraY = 0.0;
+        cameraZ = 0.0;
         recording = false;
     }
 }

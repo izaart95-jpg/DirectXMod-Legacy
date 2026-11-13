@@ -5,7 +5,9 @@ import com.mojang.blaze3d.buffers.GpuBufferSlice;
 import com.mojang.blaze3d.systems.RenderPass;
 import com.mojang.blaze3d.systems.RenderSystem;
 import com.mojang.blaze3d.vertex.VertexFormat;
+import com.xgdt.dx11.perf.PerfConfig;
 import com.xgdt.dx11.perf.PerfCounters;
+import com.xgdt.dx11.perf.PerfState;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Comparator;
@@ -22,9 +24,11 @@ import org.jspecify.annotations.Nullable;
  * per-section {@code ChunkSection} uniform; only the vertex storage changes.
  * Phase 2B (when the slice was uploaded region-relative) groups co-located
  * slices by region, coalesces contiguous arena ranges and issues one indexed
- * draw per run with a single region uniform.  Non-region draws in the same list
- * are delegated back to vanilla so mixed lists (for example after an
- * arena-budget fallback) stay correct.</p>
+ * draw per run with a single region uniform.  Phase 5 draws each translucent
+ * region once with a per-region, farthest-first sorted index buffer and orders
+ * the regions themselves back-to-front.  Non-region draws in the same list are
+ * delegated back to vanilla so mixed lists (for example after an arena-budget
+ * fallback) stay correct.</p>
  */
 public final class RegionSubmitter {
     private static final RegionIndexBuffer REGION_INDICES = new RegionIndexBuffer();
@@ -96,6 +100,14 @@ public final class RegionSubmitter {
             && singleLayer
             && (layer == ChunkSectionLayer.SOLID || layer == ChunkSectionLayer.CUTOUT)) {
             if (submitRuns(pass, draws, uniformName)) {
+                return true;
+            }
+        } else if (layer == ChunkSectionLayer.TRANSLUCENT
+            && allRegion
+            && allRebased
+            && singleLayer
+            && translucentRegionEnabled()) {
+            if (submitTranslucent(pass, draws, uniformName)) {
                 return true;
             }
         }
@@ -188,6 +200,94 @@ public final class RegionSubmitter {
         return true;
     }
 
+    /**
+     * Draws one sorted index list per visible region, farthest region first.
+     * The visible slice set is exact (it comes from vanilla's occlusion-filtered
+     * draw list), so the region index buffer never references a hidden section.
+     */
+    private static <T> boolean submitTranslucent(
+        RenderPass pass, Collection<RenderPass.Draw<T>> draws, String uniformName) {
+        Map<RegionBuffer, List<RegionVertexSlice>> groups = new LinkedHashMap<>();
+        Map<RegionBuffer, Integer> slots = new LinkedHashMap<>();
+
+        for (RenderPass.Draw<T> draw : draws) {
+            if (!(draw.vertexBuffer() instanceof RegionVertexSlice slice)
+                || slice.isClosed()) {
+                return false;
+            }
+            RegionBuffer buffer = slice.regionBuffer();
+            Integer previousSlot = slots.putIfAbsent(buffer, draw.slot());
+            if (previousSlot != null && previousSlot != draw.slot()) {
+                // One region index buffer cannot serve two vertex slots.
+                return false;
+            }
+            groups.computeIfAbsent(buffer, key -> new ArrayList<>()).add(slice);
+        }
+        if (groups.isEmpty()) {
+            return true;
+        }
+
+        double cameraX = RegionFrame.cameraX();
+        double cameraY = RegionFrame.cameraY();
+        double cameraZ = RegionFrame.cameraZ();
+        List<TranslucentPlan> plans = new ArrayList<>(groups.size());
+        for (Map.Entry<RegionBuffer, List<RegionVertexSlice>> entry : groups.entrySet()) {
+            RegionBuffer buffer = entry.getKey();
+            if (buffer.isClosed() || buffer.gpuBuffer().isClosed()) {
+                return false;
+            }
+            Region region = buffer.region();
+            RegionTranslucentIndex index =
+                region.getOrCreateTranslucentIndex(ChunkSectionLayer.TRANSLUCENT);
+            if (index == null) {
+                return false;
+            }
+            List<RegionVertexSlice> slices = entry.getValue();
+            int indexCount =
+                RegionTranslucentSorter.prepare(index, slices, cameraX, cameraY, cameraZ);
+            if (indexCount < 0) {
+                return false;
+            }
+            if (indexCount == 0) {
+                continue;
+            }
+            GpuBufferSlice uniform = RegionFrame.uniform(region.pos());
+            if (uniform == null) {
+                RegionFrame.warnMissingUniform(region);
+                return false;
+            }
+            plans.add(new TranslucentPlan(
+                buffer, slots.get(buffer), index, indexCount, uniform));
+        }
+        if (plans.isEmpty()) {
+            return true;
+        }
+
+        // Translucency must be submitted back-to-front.  The per-region sort
+        // handles quads inside a region; this orders the regions themselves.
+        plans.sort((left, right) -> Double.compare(
+            right.index.centerDistanceSquared(cameraX, cameraY, cameraZ),
+            left.index.centerDistanceSquared(cameraX, cameraY, cameraZ)));
+
+        for (TranslucentPlan plan : plans) {
+            pass.setVertexBuffer(plan.slot, plan.buffer.gpuBuffer());
+            pass.setUniform(uniformName, plan.uniform);
+            pass.setIndexBuffer(plan.index.gpuBuffer(), VertexFormat.IndexType.INT);
+            PerfCounters.onRegionRun();
+            pass.drawIndexed(0, 0, plan.indexCount, 1);
+        }
+        return true;
+    }
+
+    private static boolean translucentRegionEnabled() {
+        try {
+            PerfConfig config = PerfState.config();
+            return PerfState.active() && config.translucentRegion && config.regionDraws;
+        } catch (Throwable t) {
+            return false;
+        }
+    }
+
     private static <T> void submitPerSection(
         RenderPass pass,
         Collection<RenderPass.Draw<T>> draws,
@@ -275,6 +375,14 @@ public final class RegionSubmitter {
             }
             pass.drawIndexed(slice.startVertex(), 0, slice.indexCount(), 1);
         }
+    }
+
+    private record TranslucentPlan(
+        RegionBuffer buffer,
+        int slot,
+        RegionTranslucentIndex index,
+        int indexCount,
+        GpuBufferSlice uniform) {
     }
 
     private record GroupKey(RegionBuffer buffer, int slot) {

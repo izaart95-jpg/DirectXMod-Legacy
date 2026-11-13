@@ -98,6 +98,7 @@ public final class PerfCommand {
             + " translucentRegion=" + config.translucentRegion
             + "\n" + snapshot.format()
             + "\n" + RegionManager.describe()
+            + "\n" + com.xgdt.dx11.perf.region.RegionTranslucentSorter.describe()
             + "\n" + com.xgdt.dx11.perf.upload.UploadScheduler.describe()
             + "\nconfig=" + PerfState.configPath();
     }

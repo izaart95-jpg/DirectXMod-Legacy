@@ -20,6 +20,8 @@ public final class Region {
     private final int originBlockZ;
     private final Map<ChunkSectionLayer, RegionBuffer> buffers =
         new EnumMap<>(ChunkSectionLayer.class);
+    private final Map<ChunkSectionLayer, RegionTranslucentIndex> translucentIndices =
+        new EnumMap<>(ChunkSectionLayer.class);
 
     private int liveSlices;
     private boolean detached;
@@ -82,6 +84,21 @@ public final class Region {
         return this.buffers.get(layer);
     }
 
+    /**
+     * Returns the translucent sorted-index storage for this region, creating
+     * it on first use.  The GPU buffer itself is allocated lazily on the first
+     * sort.
+     */
+    public RegionTranslucentIndex getOrCreateTranslucentIndex(ChunkSectionLayer layer) {
+        RegionTranslucentIndex existing = this.translucentIndices.get(layer);
+        if (existing != null) {
+            return existing;
+        }
+        RegionTranslucentIndex created = new RegionTranslucentIndex(this, layer);
+        this.translucentIndices.put(layer, created);
+        return created;
+    }
+
     void retainSlice() {
         this.liveSlices++;
     }
@@ -140,6 +157,15 @@ public final class Region {
         return total;
     }
 
+    /** Capacity of the sorted translucent index buffers, in bytes. */
+    public long translucentIndexBytes() {
+        long total = 0;
+        for (RegionTranslucentIndex index : this.translucentIndices.values()) {
+            total += index.capacityBytes();
+        }
+        return total;
+    }
+
     private void closeBuffers() {
         for (RegionBuffer buffer : this.buffers.values()) {
             try {
@@ -150,6 +176,14 @@ public final class Region {
             }
         }
         this.buffers.clear();
+        for (RegionTranslucentIndex index : this.translucentIndices.values()) {
+            try {
+                index.close();
+            } catch (RuntimeException ignored) {
+                // Device teardown already released it.
+            }
+        }
+        this.translucentIndices.clear();
     }
 
     private static long initialCapacity(ChunkSectionLayer layer) {

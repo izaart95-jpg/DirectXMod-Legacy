@@ -128,6 +128,14 @@ public final class RegionManager {
         return total;
     }
 
+    public static long translucentIndexBytes() {
+        long total = 0;
+        for (Region region : REGIONS.values()) {
+            total += region.translucentIndexBytes();
+        }
+        return total;
+    }
+
     public static Collection<Region> regions() {
         return List.copyOf(REGIONS.values());
     }
@@ -138,6 +146,9 @@ public final class RegionManager {
             + " allocations=" + liveAllocations()
             + " arena=" + String.format(java.util.Locale.ROOT, "%.2f", arenaBytes / (1024.0 * 1024.0))
             + "/" + String.format(java.util.Locale.ROOT, "%.2f", budgetBytes() / (1024.0 * 1024.0))
+            + " MiB"
+            + " tindex=" + String.format(
+                java.util.Locale.ROOT, "%.2f", translucentIndexBytes() / (1024.0 * 1024.0))
             + " MiB";
     }
 }
