@@ -1,6 +1,7 @@
 #include "dx11_device.h"
 
 #include <algorithm>
+#include <atomic>
 #include <chrono>
 #include <cstdio>
 #include <cstring>
@@ -2821,10 +2822,18 @@ bool fenceAwait(Fence* fence, int64_t timeoutNanos) {
     // presented, so the fence would remain pending until the client shutdown
     // watchdog fires.  Submit pending commands once, but only when the query
     // is not already complete, to keep the normal path allocation-free.
+    static std::atomic<bool> loggedFlush{false};
     HRESULT hr = fence->device->context->GetData(
         fence->query.Get(), nullptr, 0, 0);
     if (hr == S_FALSE) {
         fence->device->context->Flush();
+        if (!loggedFlush.exchange(true)) {
+            std::fprintf(
+                stderr,
+                "[dx11] fenceAwait: flushed pending context (%s %s)\n",
+                __DATE__,
+                __TIME__);
+        }
         hr = fence->device->context->GetData(
             fence->query.Get(), nullptr, 0, 0);
     }

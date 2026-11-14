@@ -56,7 +56,9 @@ public final class Dx11Native {
                 try {
                     System.load(overridePath.toString());
                     loaded = true;
-                    System.out.println("[dx11] Native library loaded from override: " + overridePath);
+                    System.out.println(
+                        "[dx11] Native library loaded from override: "
+                            + overridePath + " (" + describeFile(overridePath) + ")");
                     return;
                 } catch (Throwable t) {
                     System.err.println("[dx11] Failed to load override " + overridePath + ": " + t);
@@ -77,7 +79,9 @@ public final class Dx11Native {
                 Path dllPath = extractLibrary(in.readAllBytes(), libName);
                 System.load(dllPath.toAbsolutePath().toString());
                 loaded = true;
-                System.out.println("[dx11] Native library loaded from: " + dllPath);
+                System.out.println(
+                    "[dx11] Native library loaded from: "
+                        + dllPath + " (" + describeFile(dllPath) + ")");
             }
         } catch (Throwable t) {
             System.err.println("[dx11] Failed to load native library: " + t);
@@ -137,6 +141,16 @@ public final class Dx11Native {
             }
         }
         return dllPath;
+    }
+
+    /** Size and modification time make a stale locally built DLL obvious. */
+    private static String describeFile(Path path) {
+        try {
+            return Files.size(path) + " bytes, modified "
+                + Files.getLastModifiedTime(path);
+        } catch (IOException e) {
+            return "metadata unavailable: " + e;
+        }
     }
 
     private static String sha256Hex(byte[] bytes) {

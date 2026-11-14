@@ -321,6 +321,7 @@ std::string runProbe() {
 
     std::ostringstream result;
     result << "OK adapter=\"" << narrow(adapterDesc.Description) << "\""
+           << " build=\"" << __DATE__ << " " << __TIME__ << "\""
            << " vendor=0x" << hex16(adapterDesc.VendorId)
            << " device=0x" << hex16(adapterDesc.DeviceId)
            << " vram=" << (adapterDesc.DedicatedVideoMemory / (1024ull * 1024ull)) << "MB"
