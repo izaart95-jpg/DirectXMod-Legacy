@@ -1,11 +1,13 @@
 package com.xgdt.dx11.mixin;
 
+import com.xgdt.dx11.perf.culling.VisibleSections;
 import com.xgdt.dx11.perf.region.RegionManager;
 import com.xgdt.dx11.perf.upload.UploadScheduler;
 import java.util.Queue;
 import net.fabricmc.api.EnvType;
 import net.fabricmc.api.Environment;
 import net.minecraft.client.multiplayer.ClientLevel;
+import net.minecraft.client.renderer.LevelRenderer;
 import net.minecraft.client.renderer.chunk.SectionMesh;
 import net.minecraft.client.renderer.chunk.SectionRenderDispatcher;
 import net.minecraft.world.phys.Vec3;
@@ -37,10 +39,21 @@ public class SectionRenderDispatcherMixin {
     @Shadow
     volatile boolean closed;
 
+    @Shadow
+    @Final
+    LevelRenderer renderer;
+
     @Inject(method = "uploadAllPendingUploads", at = @At("HEAD"), cancellable = true)
     private void dx11$budgetPendingUploads(CallbackInfo ci) {
         if (this.closed) {
             return;
+        }
+        // The applyFrustum capture is the steady-state source, but it is only
+        // refreshed when the occlusion graph or the camera rotation changes.
+        // If that snapshot is currently missing, take it here from vanilla's
+        // live list instead of draining with visibility-based ranking disabled.
+        if (!VisibleSections.captured() && VisibleSections.needed()) {
+            VisibleSections.capture(this.renderer.getVisibleSections());
         }
         if (UploadScheduler.drain(
             this.toUpload,

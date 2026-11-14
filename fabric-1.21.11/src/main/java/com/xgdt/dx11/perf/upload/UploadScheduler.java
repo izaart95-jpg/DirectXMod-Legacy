@@ -41,6 +41,7 @@ public final class UploadScheduler {
     private static final long WARN_INTERVAL_NANOS = 10_000_000_000L;
     private static final ThreadLocal<Long> PENDING_BYTES = new ThreadLocal<>();
     private static final AtomicLong SEQUENCE = new AtomicLong();
+    private static final AtomicLong WRAPPED = new AtomicLong();
 
     private static long totalDeferred;
     private static long cappedFrames;
@@ -49,12 +50,17 @@ public final class UploadScheduler {
     private static long lastQueue;
     private static long lastRan;
     private static long lastBytes;
+    private static long lastEstimatedBytes;
     private static long lastVisibleQueued;
     private static long lastOffscreenQueued;
+    private static long lastPlainQueued;
     private static long lastMs;
     private static long maxMs;
     private static long totalVisibleQueued;
     private static long totalOffscreenQueued;
+    private static long totalPlainQueued;
+    private static long totalRankedQueued;
+    private static long totalUnrankedQueued;
     private static long lastWarnNanos;
 
     private UploadScheduler() {
@@ -101,6 +107,7 @@ public final class UploadScheduler {
     public static Runnable wrap(BlockPos origin, Runnable delegate) {
         Long bytes = PENDING_BYTES.get();
         PENDING_BYTES.remove();
+        WRAPPED.incrementAndGet();
         int x = origin == null ? 0 : origin.getX();
         int y = origin == null ? 0 : origin.getY();
         int z = origin == null ? 0 : origin.getZ();
@@ -134,25 +141,36 @@ public final class UploadScheduler {
 
         if (pending.isEmpty()) {
             closeQueued(toClose);
-            publishStats(0, 0L, 0, 0L, 0, 0);
+            publishStats(0, 0L, 0L, 0, 0L, 0, 0, 0);
             return true;
         }
 
-        boolean rankOffscreen = config.deferredOffscreenUpdates && VisibleSections.captured();
+        boolean canClassify = VisibleSections.captured();
+        boolean rankOffscreen = config.deferredOffscreenUpdates && canClassify;
         long estimatedBytes = 0L;
         int visibleQueued = 0;
         int offscreenQueued = 0;
+        int plainQueued = 0;
         List<UploadOrder.Entry> entries = new ArrayList<>(pending.size());
         for (Runnable task : pending) {
             if (task instanceof BudgetedUpload upload) {
                 estimatedBytes += upload.estimatedBytes;
-                boolean visible = !rankOffscreen
-                    || VisibleSections.isVisibleBlock(
+                boolean visible = true;
+                if (canClassify) {
+                    visible = VisibleSections.isVisibleBlock(
                         upload.originX, upload.originY, upload.originZ);
-                if (visible) {
-                    visibleQueued++;
+                    if (visible) {
+                        visibleQueued++;
+                        totalVisibleQueued++;
+                    } else {
+                        offscreenQueued++;
+                        totalOffscreenQueued++;
+                    }
                 } else {
-                    offscreenQueued++;
+                    totalUnrankedQueued++;
+                }
+                if (rankOffscreen) {
+                    totalRankedQueued++;
                 }
                 entries.add(new UploadOrder.Entry(
                     true,
@@ -163,14 +181,11 @@ public final class UploadScheduler {
                     upload.sequence,
                     upload.estimatedBytes));
             } else {
+                plainQueued++;
+                totalPlainQueued++;
                 entries.add(new UploadOrder.Entry(
                     false, true, 0.0, 0.0, 0.0, entries.size(), 0L));
             }
-        }
-
-        if (rankOffscreen) {
-            totalVisibleQueued += visibleQueued;
-            totalOffscreenQueued += offscreenQueued;
         }
 
         int maxSections = config.uploadMaxSectionsPerFrame;
@@ -218,10 +233,12 @@ public final class UploadScheduler {
         publishStats(
             ran,
             bytesUsed,
+            estimatedBytes,
             ranked.length,
             System.nanoTime() - startNanos,
             visibleQueued,
-            offscreenQueued);
+            offscreenQueued,
+            plainQueued);
         return true;
     }
 
@@ -235,10 +252,16 @@ public final class UploadScheduler {
             + " queue=" + lastQueue
             + " ran=" + lastRan
             + " bytes=" + lastBytes
+            + " est=" + lastEstimatedBytes
             + " visible=" + lastVisibleQueued
             + " offscreen=" + lastOffscreenQueued
+            + " plain=" + lastPlainQueued
+            + " wrapped=" + WRAPPED.get()
+            + " ranked=" + totalRankedQueued
+            + " unranked=" + totalUnrankedQueued
             + " visibleTotal=" + totalVisibleQueued
             + " offscreenTotal=" + totalOffscreenQueued
+            + " plainTotal=" + totalPlainQueued
             + " deferred=" + totalDeferred
             + " capped=" + cappedFrames
             + " soft=" + softLimitHits
@@ -250,18 +273,22 @@ public final class UploadScheduler {
     private static void publishStats(
         int ran,
         long bytes,
+        long estimatedBytes,
         int queued,
         long elapsedNanos,
         int visibleQueued,
-        int offscreenQueued) {
+        int offscreenQueued,
+        int plainQueued) {
         // Keep the last non-empty queue visible in /dx11perf stats; an idle
         // frame would otherwise overwrite the counters with zeros.
         if (queued > 0) {
             lastQueue = queued;
             lastRan = ran;
             lastBytes = bytes;
+            lastEstimatedBytes = estimatedBytes;
             lastVisibleQueued = visibleQueued;
             lastOffscreenQueued = offscreenQueued;
+            lastPlainQueued = plainQueued;
             lastMs = elapsedNanos;
             if (elapsedNanos > maxMs) {
                 maxMs = elapsedNanos;
@@ -278,12 +305,18 @@ public final class UploadScheduler {
         lastQueue = 0L;
         lastRan = 0L;
         lastBytes = 0L;
+        lastEstimatedBytes = 0L;
         lastVisibleQueued = 0L;
         lastOffscreenQueued = 0L;
+        lastPlainQueued = 0L;
         lastMs = 0L;
         maxMs = 0L;
         totalVisibleQueued = 0L;
         totalOffscreenQueued = 0L;
+        totalPlainQueued = 0L;
+        totalRankedQueued = 0L;
+        totalUnrankedQueued = 0L;
+        WRAPPED.set(0L);
     }
 
     private static void closeQueued(Queue<? extends AutoCloseable> toClose) {
