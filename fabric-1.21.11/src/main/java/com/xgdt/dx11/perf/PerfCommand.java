@@ -112,6 +112,7 @@ public final class PerfCommand {
             + "\n" + com.xgdt.dx11.perf.upload.UploadScheduler.describe()
             + "\n" + com.xgdt.dx11.perf.culling.FogOcclusion.describe()
             + "\n" + com.xgdt.dx11.perf.culling.EntityCulling.describe()
+            + "\n" + com.xgdt.dx11.perf.immediate.ImmediateStats.describe()
             + "\nconfig=" + PerfState.configPath();
     }
 
@@ -121,6 +122,7 @@ public final class PerfCommand {
         com.xgdt.dx11.perf.culling.FogOcclusion.resetStats();
         com.xgdt.dx11.perf.culling.EntityCulling.resetStats();
         com.xgdt.dx11.perf.upload.UploadScheduler.resetStats();
+        com.xgdt.dx11.perf.immediate.ImmediateStats.reset();
         return "DX11 perf counters reset.";
     }
 
@@ -192,6 +194,34 @@ public final class PerfCommand {
                 config.visibleTextureAnimation = !config.visibleTextureAnimation;
                 yield config.visibleTextureAnimation;
             }
+            case "immediatebatching", "batching" -> {
+                config.immediateBatching = !config.immediateBatching;
+                yield config.immediateBatching;
+            }
+            case "fasttextlookup", "textlookup" -> {
+                config.fastTextLookup = !config.fastTextLookup;
+                yield config.fastTextLookup;
+            }
+            case "skiptextsorting", "textsort" -> {
+                config.skipTextSorting = !config.skipTextSorting;
+                yield config.skipTextSorting;
+            }
+            case "fontatlasresizing", "fontatlas" -> {
+                config.fontAtlasResizing = !config.fontAtlasResizing;
+                yield config.fontAtlasResizing;
+            }
+            case "fastguilayerlookup", "guilookup" -> {
+                config.fastGuiLayerLookup = !config.fastGuiLayerLookup;
+                yield config.fastGuiLayerLookup;
+            }
+            case "mapatlasgeneration", "mapatlas" -> {
+                config.mapAtlasGeneration = !config.mapAtlasGeneration;
+                yield config.mapAtlasGeneration;
+            }
+            case "signtextbuffering", "signcache" -> {
+                config.signTextBuffering = !config.signTextBuffering;
+                yield config.signTextBuffering;
+            }
             default -> null;
         };
         if (value == null) {
@@ -232,7 +262,11 @@ public final class PerfCommand {
                                             uploadBudget, compactVertices,
                                             compactVerticesForce, translucentRegion,
                                             fogOcclusion, deferredOffscreenUpdates,
-                                            entityCulling, visibleTextureAnimation
+                                            entityCulling, visibleTextureAnimation,
+                                            immediateBatching, fastTextLookup,
+                                            skipTextSorting, fontAtlasResizing,
+                                            fastGuiLayerLookup, mapAtlasGeneration,
+                                            signTextBuffering
               /dx11perf regionSize <REGION_4|REGION_8>
             The perf layer is experimental and requires the D3D11 backend.""";
     }

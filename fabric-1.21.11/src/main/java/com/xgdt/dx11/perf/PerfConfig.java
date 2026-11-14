@@ -76,6 +76,26 @@ public final class PerfConfig {
     public boolean entityCulling = false;
     public boolean visibleTextureAnimation = false;
 
+    // ImmediatelyFast-style non-terrain optimizations.  Each one is
+    // independent so a regression can be isolated without rebuilding.
+    /** Reusable/ pooled entity, block-entity, particle and text draw buffers. */
+    public boolean immediateBatching = true;
+    /** Cache the last RenderType -> VertexConsumer lookup inside a text run. */
+    public boolean fastTextLookup = true;
+    /** Do not depth-sort translucent text quads. */
+    public boolean skipTextSorting = true;
+    /** Use a larger font atlas so high-resolution fonts do not thrash it. */
+    public boolean fontAtlasResizing = true;
+    public int fontAtlasSize = 1024;
+    /** Spatial index for GUI layer/scissor hit tests. */
+    public boolean fastGuiLayerLookup = true;
+    /** Pack every loaded map into a shared atlas texture. */
+    public boolean mapAtlasGeneration = true;
+    public int mapAtlasSize = 2048;
+    /** Cache sign text in a render-target atlas (upstream default: off). */
+    public boolean signTextBuffering = false;
+    public int signAtlasSize = 4096;
+
     public boolean debugHud = false;
     public boolean debugLog = false;
 
@@ -188,7 +208,31 @@ public final class PerfConfig {
             clamp("perf.compactPositionBits", this.compactPositionBits, 16, 20, warnings);
         this.translucentSortBudget =
             clamp("perf.translucentSortBudget", this.translucentSortBudget, 0, 64, warnings);
+        this.fontAtlasSize =
+            clampAtlasSize("perf.fontAtlasSize", this.fontAtlasSize, 256, 8192, warnings);
+        this.mapAtlasSize =
+            clampAtlasSize("perf.mapAtlasSize", this.mapAtlasSize, 256, 8192, warnings);
+        this.signAtlasSize =
+            clampAtlasSize("perf.signAtlasSize", this.signAtlasSize, 512, 8192, warnings);
         return warnings;
+    }
+
+    /** Atlas sizes must be powers of two for mip/quadtree assumptions. */
+    private static int clampAtlasSize(
+        String name, int value, int min, int max, List<String> warnings) {
+        int clamped = Math.max(min, Math.min(max, value));
+        int power = Integer.highestOneBit(clamped);
+        if (power != clamped) {
+            power = power << 1;
+        }
+        if (power > max) {
+            power = Integer.highestOneBit(max);
+        }
+        if (power != value) {
+            warnings.add(name + "=" + value + " is not a supported power of two [" + min
+                + ", " + max + "]; using " + power);
+        }
+        return power;
     }
 
     private static int clamp(String name, int value, int min, int max, List<String> warnings) {

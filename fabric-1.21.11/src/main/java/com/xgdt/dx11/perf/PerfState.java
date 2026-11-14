@@ -25,6 +25,12 @@ import org.slf4j.LoggerFactory;
 public final class PerfState {
     private static final Logger LOGGER = LoggerFactory.getLogger("gl4dx11");
     public static final String DEBUG_PROPERTY = "gl4dx11.perf.debug";
+    /**
+     * Validation-only switch: runs the ImmediatelyFast-style layer even when
+     * the D3D11 backend is unavailable (for example on a Linux GL smoke test).
+     * The region renderer and other backend-gated features stay disabled.
+     */
+    public static final String FORCE_IMMEDIATE_PROPERTY = "gl4dx11.perf.forceImmediate";
 
     private static volatile PerfConfig config;
     private static volatile Path configPath;
@@ -100,7 +106,14 @@ public final class PerfState {
 
         boolean wasActive = active;
         active = current.enabled() && backendActive;
-        PerfCounters.setEnabled(active);
+        boolean forceImmediate = current.enabled()
+            && !active
+            && Boolean.getBoolean(FORCE_IMMEDIATE_PROPERTY);
+        PerfCounters.setEnabled(active || forceImmediate);
+        com.xgdt.dx11.perf.immediate.ImmediateFlags.apply(active || forceImmediate, current);
+        if (forceImmediate) {
+            LOGGER.info("[dx11-perf] Immediate feature layer forced on for validation");
+        }
         if (active != wasActive) {
             if (active) {
                 LOGGER.info(
