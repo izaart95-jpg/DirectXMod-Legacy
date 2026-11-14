@@ -2814,9 +2814,21 @@ bool fenceAwait(Fence* fence, int64_t timeoutNanos) {
         timeoutNanos < 0 || timeoutNanos == std::numeric_limits<int64_t>::max();
     const auto deadline = std::chrono::steady_clock::now() +
                           std::chrono::nanoseconds(infinite ? 0 : timeoutNanos);
-    for (;;) {
-        const HRESULT hr = fence->device->context->GetData(
+
+    // GetData on an event query returns S_FALSE until the GPU has processed
+    // the query.  The query is only submitted when the immediate context is
+    // flushed or presented.  During shutdown the last world frame may never be
+    // presented, so the fence would remain pending until the client shutdown
+    // watchdog fires.  Submit pending commands once, but only when the query
+    // is not already complete, to keep the normal path allocation-free.
+    HRESULT hr = fence->device->context->GetData(
+        fence->query.Get(), nullptr, 0, 0);
+    if (hr == S_FALSE) {
+        fence->device->context->Flush();
+        hr = fence->device->context->GetData(
             fence->query.Get(), nullptr, 0, 0);
+    }
+    for (;;) {
         if (hr == S_OK) {
             return true;
         }
@@ -2827,6 +2839,8 @@ bool fenceAwait(Fence* fence, int64_t timeoutNanos) {
             return false;
         }
         std::this_thread::sleep_for(std::chrono::microseconds(100));
+        hr = fence->device->context->GetData(
+            fence->query.Get(), nullptr, 0, 0);
     }
 }
 
