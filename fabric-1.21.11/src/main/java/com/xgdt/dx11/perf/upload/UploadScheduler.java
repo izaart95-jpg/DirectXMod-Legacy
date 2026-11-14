@@ -4,6 +4,7 @@ import com.mojang.blaze3d.vertex.MeshData;
 import com.xgdt.dx11.perf.PerfConfig;
 import com.xgdt.dx11.perf.PerfCounters;
 import com.xgdt.dx11.perf.PerfState;
+import com.xgdt.dx11.perf.culling.VisibleSections;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -48,6 +49,8 @@ public final class UploadScheduler {
     private static long lastQueue;
     private static long lastRan;
     private static long lastBytes;
+    private static long lastVisibleQueued;
+    private static long lastOffscreenQueued;
     private static long lastMs;
     private static long maxMs;
     private static long lastWarnNanos;
@@ -129,17 +132,29 @@ public final class UploadScheduler {
 
         if (pending.isEmpty()) {
             closeQueued(toClose);
-            publishStats(0, 0L, 0, 0L);
+            publishStats(0, 0L, 0, 0L, 0, 0);
             return true;
         }
 
+        boolean rankOffscreen = config.deferredOffscreenUpdates && VisibleSections.captured();
         long estimatedBytes = 0L;
+        int visibleQueued = 0;
+        int offscreenQueued = 0;
         List<UploadOrder.Entry> entries = new ArrayList<>(pending.size());
         for (Runnable task : pending) {
             if (task instanceof BudgetedUpload upload) {
                 estimatedBytes += upload.estimatedBytes;
+                boolean visible = !rankOffscreen
+                    || VisibleSections.isVisibleBlock(
+                        upload.originX, upload.originY, upload.originZ);
+                if (visible) {
+                    visibleQueued++;
+                } else {
+                    offscreenQueued++;
+                }
                 entries.add(new UploadOrder.Entry(
                     true,
+                    visible,
                     upload.originX,
                     upload.originY,
                     upload.originZ,
@@ -147,7 +162,7 @@ public final class UploadScheduler {
                     upload.estimatedBytes));
             } else {
                 entries.add(new UploadOrder.Entry(
-                    false, 0.0, 0.0, 0.0, entries.size(), 0L));
+                    false, true, 0.0, 0.0, 0.0, entries.size(), 0L));
             }
         }
 
@@ -193,7 +208,13 @@ public final class UploadScheduler {
         if (selection.capped()) {
             cappedFrames++;
         }
-        publishStats(ran, bytesUsed, ranked.length, System.nanoTime() - startNanos);
+        publishStats(
+            ran,
+            bytesUsed,
+            ranked.length,
+            System.nanoTime() - startNanos,
+            visibleQueued,
+            offscreenQueued);
         return true;
     }
 
@@ -207,6 +228,8 @@ public final class UploadScheduler {
             + " queue=" + lastQueue
             + " ran=" + lastRan
             + " bytes=" + lastBytes
+            + " visible=" + lastVisibleQueued
+            + " offscreen=" + lastOffscreenQueued
             + " deferred=" + totalDeferred
             + " capped=" + cappedFrames
             + " soft=" + softLimitHits
@@ -216,10 +239,17 @@ public final class UploadScheduler {
     }
 
     private static void publishStats(
-        int ran, long bytes, int queued, long elapsedNanos) {
+        int ran,
+        long bytes,
+        int queued,
+        long elapsedNanos,
+        int visibleQueued,
+        int offscreenQueued) {
         lastQueue = queued;
         lastRan = ran;
         lastBytes = bytes;
+        lastVisibleQueued = visibleQueued;
+        lastOffscreenQueued = offscreenQueued;
         lastMs = elapsedNanos;
         if (elapsedNanos > maxMs) {
             maxMs = elapsedNanos;

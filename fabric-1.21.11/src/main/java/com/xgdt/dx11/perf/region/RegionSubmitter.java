@@ -9,6 +9,8 @@ import com.mojang.blaze3d.vertex.VertexFormat;
 import com.xgdt.dx11.perf.PerfConfig;
 import com.xgdt.dx11.perf.PerfCounters;
 import com.xgdt.dx11.perf.PerfState;
+import com.xgdt.dx11.perf.culling.FogCuller;
+import com.xgdt.dx11.perf.culling.FogOcclusion;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Comparator;
@@ -95,12 +97,14 @@ public final class RegionSubmitter {
         String uniformName = uniformNames.isEmpty()
             ? "ChunkSection"
             : uniformNames.iterator().next();
+        FogCuller fog = FogOcclusion.culler(
+            RegionFrame.cameraX(), RegionFrame.cameraY(), RegionFrame.cameraZ());
 
         if (allRegion
             && allRebased
             && singleLayer
             && (layer == ChunkSectionLayer.SOLID || layer == ChunkSectionLayer.CUTOUT)) {
-            if (submitRuns(pass, draws, uniformName, layer)) {
+            if (submitRuns(pass, draws, uniformName, layer, fog)) {
                 return true;
             }
         } else if (layer == ChunkSectionLayer.TRANSLUCENT
@@ -121,7 +125,8 @@ public final class RegionSubmitter {
             uniformNames,
             uniformOwner,
             uniformName,
-            layer);
+            layer,
+            fog);
         return true;
     }
 
@@ -129,10 +134,14 @@ public final class RegionSubmitter {
         RenderPass pass,
         Collection<RenderPass.Draw<T>> draws,
         String uniformName,
-        ChunkSectionLayer layer) {
+        ChunkSectionLayer layer,
+        @Nullable FogCuller fog) {
         Map<GroupKey, List<RegionVertexSlice>> groups = new LinkedHashMap<>();
         for (RenderPass.Draw<T> draw : draws) {
             if (draw.vertexBuffer() instanceof RegionVertexSlice slice && !slice.isClosed()) {
+                if (fog != null && cullOpaque(fog, slice)) {
+                    continue;
+                }
                 groups.computeIfAbsent(
                         new GroupKey(slice.regionBuffer(), draw.slot()),
                         key -> new ArrayList<>())
@@ -334,6 +343,25 @@ public final class RegionSubmitter {
         }
     }
 
+    /**
+     * Fog-culls only the opaque terrain layers.  Translucent sections keep
+     * their draws because culling water/glass could change alpha blending near
+     * the fog boundary, and because the per-region translucent sort would
+     * otherwise rebuild whenever the camera crosses that boundary.
+     */
+    private static boolean cullOpaque(FogCuller fog, RegionVertexSlice slice) {
+        ChunkSectionLayer layer = slice.layer();
+        if (layer != ChunkSectionLayer.SOLID && layer != ChunkSectionLayer.CUTOUT) {
+            return false;
+        }
+        if (!fog.isFullyFogged(
+            slice.sectionOriginX(), slice.sectionOriginY(), slice.sectionOriginZ())) {
+            return false;
+        }
+        FogOcclusion.onCulledSection();
+        return true;
+    }
+
     private static <T> void submitPerSection(
         RenderPass pass,
         Collection<RenderPass.Draw<T>> draws,
@@ -342,7 +370,8 @@ public final class RegionSubmitter {
         Collection<String> uniformNames,
         T uniformOwner,
         String uniformName,
-        @Nullable ChunkSectionLayer listLayer) {
+        @Nullable ChunkSectionLayer listLayer,
+        @Nullable FogCuller fog) {
         RegionBuffer boundRegion = null;
         int boundSlot = -1;
         GpuBuffer boundIndex = null;
@@ -369,6 +398,9 @@ public final class RegionSubmitter {
             if (slice.isClosed()) {
                 // The section was dropped between draw-list construction and
                 // submission; its arena slice is already gone.
+                continue;
+            }
+            if (fog != null && cullOpaque(fog, slice)) {
                 continue;
             }
 

@@ -79,7 +79,13 @@ public final class PerfCommand {
                     || flag.equals("debuglog")
                     || flag.equals("log")
                     || flag.equals("uploadbudget")
-                    || flag.equals("budget"));
+                    || flag.equals("budget")
+                    || flag.equals("fogocclusion")
+                    || flag.equals("fog")
+                    || flag.equals("deferredoffscreenupdates")
+                    || flag.equals("deferred")
+                    || flag.equals("entityculling")
+                    || flag.equals("entities"));
             }
             default -> false;
         };
@@ -96,17 +102,24 @@ public final class PerfCommand {
             + " regionDraws=" + config.regionDraws
             + " compact=" + config.compactVertices
             + " translucentRegion=" + config.translucentRegion
+            + " fogOcclusion=" + config.fogOcclusion
+            + " deferredOffscreen=" + config.deferredOffscreenUpdates
+            + " entityCulling=" + config.entityCulling
             + "\n" + snapshot.format()
             + "\n" + RegionManager.describe()
             + "\n" + com.xgdt.dx11.perf.region.CompactTerrainFormat.describe()
             + "\n" + com.xgdt.dx11.perf.region.RegionTranslucentSorter.describe()
             + "\n" + com.xgdt.dx11.perf.upload.UploadScheduler.describe()
+            + "\n" + com.xgdt.dx11.perf.culling.FogOcclusion.describe()
+            + "\n" + com.xgdt.dx11.perf.culling.EntityCulling.describe()
             + "\nconfig=" + PerfState.configPath();
     }
 
     private static String reset() {
         PerfCounters.reset();
         com.xgdt.dx11.perf.region.CompactTerrainFormat.resetStats();
+        com.xgdt.dx11.perf.culling.FogOcclusion.resetStats();
+        com.xgdt.dx11.perf.culling.EntityCulling.resetStats();
         return "DX11 perf counters reset.";
     }
 

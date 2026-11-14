@@ -224,6 +224,9 @@ public final class RegionUploader {
                     draw.indexCount(),
                     vertexCount,
                     layer,
+                    sectionOrigin.getX(),
+                    sectionOrigin.getY(),
+                    sectionOrigin.getZ(),
                     true,
                     compact,
                     null);
@@ -237,6 +240,9 @@ public final class RegionUploader {
                     draw.indexCount(),
                     vertexCount,
                     layer,
+                    sectionOrigin.getX(),
+                    sectionOrigin.getY(),
+                    sectionOrigin.getZ(),
                     false,
                     false,
                     null);
@@ -367,6 +373,9 @@ public final class RegionUploader {
                 draw.indexCount(),
                 vertexCount,
                 layer,
+                sectionOrigin.getX(),
+                sectionOrigin.getY(),
+                sectionOrigin.getZ(),
                 true,
                 compact,
                 regionCentroids);

@@ -22,17 +22,30 @@ public final class UploadOrder {
      *
      * @param prioritized true for a section upload (ranked by distance); false
      *                    for small bookkeeping uploads that should run first
+     * @param visible     true when the section was in the frame's visible set;
+     *                    visible uploads are ranked before off-screen ones
      * @param centerX     section-origin block coordinate
      * @param sequence    insertion sequence, used as a stable tie-breaker
      * @param estimatedBytes estimated vertex+index bytes of the upload
      */
     public record Entry(
         boolean prioritized,
+        boolean visible,
         double centerX,
         double centerY,
         double centerZ,
         long sequence,
         long estimatedBytes) {
+        /** Convenience constructor for uploads with no visibility snapshot. */
+        public Entry(
+            boolean prioritized,
+            double centerX,
+            double centerY,
+            double centerZ,
+            long sequence,
+            long estimatedBytes) {
+            this(prioritized, true, centerX, centerY, centerZ, sequence, estimatedBytes);
+        }
     }
 
     /** Result of prefix selection over a ranked entry list. */
@@ -44,8 +57,9 @@ public final class UploadOrder {
 
     /**
      * Ranks entries for one frame: non-prioritized bookkeeping first (queue
-     * order), then section uploads from nearest to farthest, with insertion
-     * order as a stable tie-breaker.
+     * order), then visible section uploads from nearest to farthest, then
+     * off-screen section uploads from nearest to farthest.  Insertion order is
+     * the stable tie-breaker.
      */
     public static int[] rank(
         List<Entry> entries, double cameraX, double cameraY, double cameraZ) {
@@ -60,6 +74,9 @@ public final class UploadOrder {
                 return a.prioritized() ? 1 : -1;
             }
             if (a.prioritized()) {
+                if (a.visible() != b.visible()) {
+                    return a.visible() ? -1 : 1;
+                }
                 double distanceA = distanceSquared(a, cameraX, cameraY, cameraZ);
                 double distanceB = distanceSquared(b, cameraX, cameraY, cameraZ);
                 int byDistance = Double.compare(distanceA, distanceB);

@@ -46,6 +46,30 @@ class UploadOrderTest {
     }
 
     @Test
+    void visibleSectionUploadsComeBeforeOffscreenOnes() {
+        List<UploadOrder.Entry> entries = List.of(
+            new UploadOrder.Entry(true, false, 0, 0, 0, 0, 100),
+            new UploadOrder.Entry(true, true, 256, 0, 0, 1, 100),
+            new UploadOrder.Entry(true, true, 0, 0, 0, 2, 100),
+            new UploadOrder.Entry(true, false, 0, 0, 0, 3, 100));
+
+        int[] ranked = UploadOrder.rank(entries, 0, 0, 0);
+
+        assertArrayEquals(new int[] {2, 1, 0, 3}, ranked);
+    }
+
+    @Test
+    void bookkeepingStillRunsBeforeVisibleSectionUploads() {
+        List<UploadOrder.Entry> entries = List.of(
+            new UploadOrder.Entry(true, true, 0, 0, 0, 0, 100),
+            new UploadOrder.Entry(false, true, 0, 0, 0, 1, 10));
+
+        int[] ranked = UploadOrder.rank(entries, 0, 0, 0);
+
+        assertArrayEquals(new int[] {1, 0}, ranked);
+    }
+
+    @Test
     void selectionHonoursSectionAndByteCaps() {
         List<UploadOrder.Entry> entries = List.of(
             new UploadOrder.Entry(true, 0, 0, 0, 0, 100),

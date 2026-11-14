@@ -23,6 +23,9 @@ public final class RegionVertexSlice extends GpuBuffer {
     private final int indexCount;
     private final int vertexCount;
     private final ChunkSectionLayer layer;
+    private final int sectionOriginX;
+    private final int sectionOriginY;
+    private final int sectionOriginZ;
     private final boolean regionRelative;
     private final boolean compact;
     private final int startVertex;
@@ -37,6 +40,9 @@ public final class RegionVertexSlice extends GpuBuffer {
         int indexCount,
         int vertexCount,
         ChunkSectionLayer layer,
+        int sectionOriginX,
+        int sectionOriginY,
+        int sectionOriginZ,
         boolean regionRelative,
         boolean compact,
         float[] centroids) {
@@ -59,6 +65,9 @@ public final class RegionVertexSlice extends GpuBuffer {
         this.indexCount = indexCount;
         this.vertexCount = vertexCount;
         this.layer = layer;
+        this.sectionOriginX = sectionOriginX;
+        this.sectionOriginY = sectionOriginY;
+        this.sectionOriginZ = sectionOriginZ;
         this.regionRelative = regionRelative;
         this.compact = compact;
         this.startVertex = (int) start;
@@ -96,6 +105,21 @@ public final class RegionVertexSlice extends GpuBuffer {
 
     public ChunkSectionLayer layer() {
         return this.layer;
+    }
+
+    /** Section-origin block X of the mesh this slice was built from. */
+    public int sectionOriginX() {
+        return this.sectionOriginX;
+    }
+
+    /** Section-origin block Y of the mesh this slice was built from. */
+    public int sectionOriginY() {
+        return this.sectionOriginY;
+    }
+
+    /** Section-origin block Z of the mesh this slice was built from. */
+    public int sectionOriginZ() {
+        return this.sectionOriginZ;
     }
 
     /** True when the vertex positions were rebased to the region origin. */
