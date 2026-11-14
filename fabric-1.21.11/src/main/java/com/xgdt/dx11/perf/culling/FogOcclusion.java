@@ -104,6 +104,7 @@ public final class FogOcclusion {
             return "fogCull=off";
         }
         return "fogCull=on"
+            + " fog=" + (fogEnabled ? "on" : "off")
             + " envEnd=" + format(environmentalEnd)
             + " renderEnd=" + format(renderDistanceEnd)
             + " culled=" + culledSections;

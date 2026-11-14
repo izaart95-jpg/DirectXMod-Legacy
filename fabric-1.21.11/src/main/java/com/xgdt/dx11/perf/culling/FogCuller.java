@@ -11,11 +11,15 @@ package com.xgdt.dx11.perf.culling;
  *                   linear(cylindrical, renderStart, renderEnd))
  * </pre>
  *
- * <p>A section can only be skipped when <em>every</em> vertex is fully fogged,
- * which is true when the nearest point of its bounding box already exceeds
- * both fog ends.  Using the nearest point keeps the test conservative: a box
- * that merely straddles the boundary still contains non-fogged vertices and is
- * never culled.  Coordinates are camera-relative.</p>
+ * <p>A section can only be skipped when <em>every</em> vertex is fully fogged.
+ * The shader takes the maximum of the environmental (spherical) and
+ * render-distance (cylindrical) terms, so the whole box is fully fogged when
+ * its nearest point already exceeds <em>either</em> end.  That covers the
+ * render-distance boundary as well as the much nearer environmental boundary
+ * used by lava, water, blindness, darkness, weather and boss fog.  Using the
+ * nearest point keeps the test conservative: a box that merely straddles a
+ * boundary still contains non-fogged vertices and is never culled.
+ * Coordinates are camera-relative.</p>
  *
  * <p>This class has no Minecraft dependency so the distance rules can be
  * unit-tested on the Linux host.</p>
@@ -33,7 +37,7 @@ public record FogCuller(
      * @param sectionOriginX section-origin block coordinate
      * @param sectionOriginY section-origin block coordinate
      * @param sectionOriginZ section-origin block coordinate
-     * @return true when the whole section is beyond both fog ends
+     * @return true when the whole section is beyond either fog end
      */
     public boolean isFullyFogged(
         int sectionOriginX, int sectionOriginY, int sectionOriginZ) {
@@ -53,7 +57,7 @@ public record FogCuller(
         double cylindrical = Math.max(
             Math.sqrt(nearestX * nearestX + nearestZ * nearestZ), nearestY);
         return spherical >= this.environmentalEnd
-            && cylindrical >= this.renderDistanceEnd;
+            || cylindrical >= this.renderDistanceEnd;
     }
 
     /** Distance from zero to the closest point of {@code [min, max]}. */

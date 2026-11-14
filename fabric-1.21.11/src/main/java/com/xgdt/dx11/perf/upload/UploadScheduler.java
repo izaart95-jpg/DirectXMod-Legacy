@@ -53,6 +53,8 @@ public final class UploadScheduler {
     private static long lastOffscreenQueued;
     private static long lastMs;
     private static long maxMs;
+    private static long totalVisibleQueued;
+    private static long totalOffscreenQueued;
     private static long lastWarnNanos;
 
     private UploadScheduler() {
@@ -166,6 +168,11 @@ public final class UploadScheduler {
             }
         }
 
+        if (rankOffscreen) {
+            totalVisibleQueued += visibleQueued;
+            totalOffscreenQueued += offscreenQueued;
+        }
+
         int maxSections = config.uploadMaxSectionsPerFrame;
         long maxBytes = config.uploadMaxBytesPerFrame;
         long softLimit = Math.max(0L, config.deferredUploadLimitMb) * MiB;
@@ -230,6 +237,8 @@ public final class UploadScheduler {
             + " bytes=" + lastBytes
             + " visible=" + lastVisibleQueued
             + " offscreen=" + lastOffscreenQueued
+            + " visibleTotal=" + totalVisibleQueued
+            + " offscreenTotal=" + totalOffscreenQueued
             + " deferred=" + totalDeferred
             + " capped=" + cappedFrames
             + " soft=" + softLimitHits
@@ -245,15 +254,36 @@ public final class UploadScheduler {
         long elapsedNanos,
         int visibleQueued,
         int offscreenQueued) {
-        lastQueue = queued;
-        lastRan = ran;
-        lastBytes = bytes;
-        lastVisibleQueued = visibleQueued;
-        lastOffscreenQueued = offscreenQueued;
-        lastMs = elapsedNanos;
-        if (elapsedNanos > maxMs) {
-            maxMs = elapsedNanos;
+        // Keep the last non-empty queue visible in /dx11perf stats; an idle
+        // frame would otherwise overwrite the counters with zeros.
+        if (queued > 0) {
+            lastQueue = queued;
+            lastRan = ran;
+            lastBytes = bytes;
+            lastVisibleQueued = visibleQueued;
+            lastOffscreenQueued = offscreenQueued;
+            lastMs = elapsedNanos;
+            if (elapsedNanos > maxMs) {
+                maxMs = elapsedNanos;
+            }
         }
+    }
+
+    /** Clears the session counters along with the rest of the perf stats. */
+    public static void resetStats() {
+        totalDeferred = 0L;
+        cappedFrames = 0L;
+        softLimitHits = 0L;
+        failedUploads = 0L;
+        lastQueue = 0L;
+        lastRan = 0L;
+        lastBytes = 0L;
+        lastVisibleQueued = 0L;
+        lastOffscreenQueued = 0L;
+        lastMs = 0L;
+        maxMs = 0L;
+        totalVisibleQueued = 0L;
+        totalOffscreenQueued = 0L;
     }
 
     private static void closeQueued(Queue<? extends AutoCloseable> toClose) {

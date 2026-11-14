@@ -120,6 +120,7 @@ public final class PerfCommand {
         com.xgdt.dx11.perf.region.CompactTerrainFormat.resetStats();
         com.xgdt.dx11.perf.culling.FogOcclusion.resetStats();
         com.xgdt.dx11.perf.culling.EntityCulling.resetStats();
+        com.xgdt.dx11.perf.upload.UploadScheduler.resetStats();
         return "DX11 perf counters reset.";
     }
 

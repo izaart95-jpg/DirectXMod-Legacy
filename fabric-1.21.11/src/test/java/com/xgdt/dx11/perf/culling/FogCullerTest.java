@@ -22,19 +22,27 @@ class FogCullerTest {
     }
 
     @Test
-    void sectionBeyondRenderEndButInsideEnvironmentalFogIsKept() {
+    void sectionBeyondRenderEndIsCulledEvenInsideEnvironmentalFog() {
+        // Render-distance fog alone already saturates the shader's max().
         FogCuller culler = new FogCuller(64.0, 24.0, 0.0, 0.0, 0.0);
 
-        assertFalse(culler.isFullyFogged(32, 0, 0));
+        assertTrue(culler.isFullyFogged(32, 0, 0));
     }
 
     @Test
-    void sectionBeyondEnvironmentalEndButInsideRenderFogIsKept() {
+    void sectionBeyondEnvironmentalEndIsCulledEvenInsideRenderFog() {
         // Directly above the camera: spherical distance passes the
-        // environmental end, but the cylindrical distance is still small.
+        // environmental end, so the environmental term alone is opaque.
         FogCuller culler = new FogCuller(16.0, 128.0, 0.0, 0.0, 0.0);
 
-        assertFalse(culler.isFullyFogged(0, 64, 0));
+        assertTrue(culler.isFullyFogged(0, 64, 0));
+    }
+
+    @Test
+    void sectionInsideBothEndsIsKept() {
+        FogCuller culler = new FogCuller(64.0, 64.0, 0.0, 0.0, 0.0);
+
+        assertFalse(culler.isFullyFogged(16, 0, 0));
     }
 
     @Test
