@@ -59,7 +59,14 @@ public abstract class RenderSectionUploadMixin {
             target = "Ljava/util/concurrent/CompletableFuture;runAsync(Ljava/lang/Runnable;Ljava/util/concurrent/Executor;)Ljava/util/concurrent/CompletableFuture;"))
     private CompletableFuture<Void> dx11$wrapUploadTask(
         Runnable task, Executor executor, Operation<CompletableFuture<Void>> original) {
-        return original.call(UploadScheduler.wrap(this.getRenderOrigin(), task), executor);
+        // CompletableFuture.runAsync wraps the runnable in its private AsyncRun
+        // before calling executor.execute(...).  Wrapping `task` at this call
+        // site would leave the queue holding an untagged AsyncRun, so tag the
+        // runnable the executor actually receives instead.
+        BlockPos origin = this.getRenderOrigin();
+        Executor taggingExecutor = queued ->
+            executor.execute(UploadScheduler.wrap(origin, queued));
+        return original.call(task, taggingExecutor);
     }
 
     @Inject(method = "upload", at = @At("RETURN"))
