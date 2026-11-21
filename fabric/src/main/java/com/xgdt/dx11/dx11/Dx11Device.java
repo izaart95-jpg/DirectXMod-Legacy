@@ -49,8 +49,12 @@ final class Dx11Device implements GpuDevice {
     private static final Logger LOGGER = LoggerFactory.getLogger("gl4dx11");
     private static final Identifier TERRAIN_VERTEX_SHADER =
         Identifier.parse("minecraft:core/terrain");
-    // Reused scratch for the per-frame glfwGetFramebufferSize call.
-    private static final int[] FRAMEBUFFER_SIZE = new int[2];
+    // Reused scratch for the per-frame glfwGetFramebufferSize call.  GLFW
+    // writes the two outputs into the arrays it is handed, so width and height
+    // must not share one array (that made both values the height and forced a
+    // swapchain resize on every present).
+    private static final int[] FRAMEBUFFER_WIDTH = new int[1];
+    private static final int[] FRAMEBUFFER_HEIGHT = new int[1];
     // Resolved once: flipFrame used to run System.getProperty every frame.
     private static final String DEBUG_DUMP_DIR = resolveDebugDumpDir();
 
@@ -177,10 +181,10 @@ final class Dx11Device implements GpuDevice {
         if (this.closed) {
             return;
         }
-        int[] size = FRAMEBUFFER_SIZE;
-        org.lwjgl.glfw.GLFW.glfwGetFramebufferSize(windowHandle, size, size);
-        final int width = size[0];
-        final int height = size[1];
+        org.lwjgl.glfw.GLFW.glfwGetFramebufferSize(
+            windowHandle, FRAMEBUFFER_WIDTH, FRAMEBUFFER_HEIGHT);
+        final int width = FRAMEBUFFER_WIDTH[0];
+        final int height = FRAMEBUFFER_HEIGHT[0];
         final long frame = ++this.frameCount;
         if (this.debugLogging && (frame <= 5 || frame % 600 == 0)) {
             LOGGER.info("[dx11] flipFrame #{} size={}x{} vsync={}",
