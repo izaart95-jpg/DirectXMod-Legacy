@@ -4,6 +4,7 @@ import com.mojang.blaze3d.systems.RenderSystem;
 import com.xgdt.dx11.config.Dx11Config;
 import com.xgdt.dx11.perf.PerfDebugLog;
 import com.xgdt.dx11.perf.immediate.BufferPool;
+import com.xgdt.dx11.perf.immediate.ImmediateFlags;
 import com.xgdt.dx11.perf.immediate.sign.SignTextCache;
 import com.xgdt.dx11.perf.overlay.PerfOverlayStats;
 import net.fabricmc.api.EnvType;
@@ -33,8 +34,12 @@ public class RenderSystemPerfMixin {
     private static void dx11$endImmediateFrame(CallbackInfo ci) {
         PerfDebugLog.maybeLog();
         PerfOverlayStats.onFrameBoundary();
+        // Sign-text atlas maintenance also runs on the GL validation path (the
+        // forced-immediate smoke test); only the buffer pool is backend-bound.
         if (Dx11Config.shouldUseDx11()) {
             BufferPool.endFrame();
+        }
+        if (ImmediateFlags.signTextBuffering()) {
             SignTextCache.endFrame();
         }
     }

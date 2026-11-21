@@ -32,7 +32,17 @@ final class Dx11RenderPass implements RenderPass {
     private final boolean debugLogging = Dx11Config.debugLogging();
     private final Map<String, GpuBufferSlice> uniforms = new HashMap<>();
     private final Map<String, TextureViewAndSampler> samplers = new HashMap<>();
+    // Binding caches: what the previous draw in THIS pass actually sent to the
+    // native side.  Re-issuing identical uniform uploads meant a Map(WRITE_
+    // DISCARD) + memcpy + Unmap per draw; identical texture binds meant four
+    // redundant driver calls per draw.  D3D11 context state persists between
+    // draws, so an unchanged (buffer, offset, length) / (view, sampler) pair
+    // can simply skip the call.  A new pass starts with empty caches and a
+    // pipeline change invalidates them (slot mappings differ per pipeline).
+    private final Map<String, GpuBufferSlice> appliedUniforms = new HashMap<>();
+    private final Map<String, TextureViewAndSampler> appliedTextures = new HashMap<>();
     private @Nullable Dx11RenderPipeline pipeline;
+    private @Nullable Dx11RenderPipeline appliedPipeline;
     private @Nullable Dx11Buffer vertexBuffer;
     private @Nullable Dx11Buffer indexBuffer;
     private VertexFormat.@Nullable IndexType indexType;
@@ -64,6 +74,12 @@ final class Dx11RenderPass implements RenderPass {
             Dx11Native.nativePassSetPipeline(this.handle, this.pipeline.handle());
         } else {
             LOGGER.error("[dx11] Pipeline {} is invalid", pipeline.getLocation());
+        }
+        // Slot mappings are per pipeline; start binding caches over.
+        if (this.appliedPipeline != this.pipeline) {
+            this.appliedPipeline = this.pipeline;
+            this.appliedUniforms.clear();
+            this.appliedTextures.clear();
         }
     }
 
@@ -111,18 +127,24 @@ final class Dx11RenderPass implements RenderPass {
         if (slot != 0) {
             throw new IllegalArgumentException("Vertex buffer slot is out of range: " + slot);
         }
-        this.vertexBuffer = (Dx11Buffer) buffer;
+        Dx11Buffer next = (Dx11Buffer) buffer;
         Dx11Metrics.onBufferBind();
-        Dx11Native.nativePassSetVertexBuffer(this.handle, this.vertexBuffer.handle());
+        if (this.vertexBuffer != next) {
+            this.vertexBuffer = next;
+            Dx11Native.nativePassSetVertexBuffer(this.handle, next.handle());
+        }
     }
 
     @Override
     public void setIndexBuffer(GpuBuffer buffer, VertexFormat.IndexType indexType) {
-        this.indexBuffer = (Dx11Buffer) buffer;
-        this.indexType = indexType;
+        Dx11Buffer next = (Dx11Buffer) buffer;
         Dx11Metrics.onBufferBind();
-        Dx11Native.nativePassSetIndexBuffer(
-            this.handle, this.indexBuffer.handle(), indexType == VertexFormat.IndexType.INT);
+        if (this.indexBuffer != next || this.indexType != indexType) {
+            this.indexBuffer = next;
+            this.indexType = indexType;
+            Dx11Native.nativePassSetIndexBuffer(
+                this.handle, next.handle(), indexType == VertexFormat.IndexType.INT);
+        }
     }
 
     @Override
@@ -219,6 +241,9 @@ final class Dx11RenderPass implements RenderPass {
         // not declare (notably "Globals" from RenderSystem.bindDefaultUniforms)
         // and only the compiled binding list knows about them.  The D3D12
         // backend does the same through pipeline.buildBindings().
+        //
+        // Unchanged (buffer, offset, length) triples skip the native upload:
+        // the dynamic constant buffer already holds exactly those bytes.
         for (Map.Entry<String, GpuBufferSlice> entry : this.uniforms.entrySet()) {
             String name = entry.getKey();
             GpuBufferSlice slice = entry.getValue();
@@ -232,6 +257,8 @@ final class Dx11RenderPass implements RenderPass {
                         name, slot, texelFormat);
                 }
                 if (slot != null) {
+                    // The native side re-uploads its texture only when the
+                    // buffer version changed, so this stays cheap per draw.
                     Dx11Native.nativePassSetTexelBuffer(
                         this.handle,
                         slot,
@@ -245,6 +272,13 @@ final class Dx11RenderPass implements RenderPass {
                 LOGGER.info("[dx11]   uniform '{}' slot={}", name, slot);
             }
             if (slot != null) {
+                GpuBufferSlice applied = this.appliedUniforms.get(name);
+                if (applied != null
+                    && applied.buffer() == slice.buffer()
+                    && applied.offset() == slice.offset()
+                    && applied.length() == slice.length()) {
+                    continue;
+                }
                 Dx11Metrics.onUniformBind();
                 Dx11Native.nativePassSetUniform(
                     this.handle,
@@ -252,12 +286,14 @@ final class Dx11RenderPass implements RenderPass {
                     buffer.handle(),
                     slice.offset(),
                     slice.length());
+                this.appliedUniforms.put(name, slice);
             }
         }
 
         // Bind sampled textures and explicitly unbind slots that this pipeline
         // declares but the pass does not provide, so a stale binding from a
-        // previous draw cannot leak in.
+        // previous draw cannot leak in.  Unchanged (view, sampler) pairs skip
+        // the four driver calls the native bind costs.
         for (Map.Entry<String, Integer> entry : current.textureSlots().entrySet()) {
             String name = entry.getKey();
             if (current.texelFormat(name) != null) {
@@ -269,6 +305,10 @@ final class Dx11RenderPass implements RenderPass {
                     "[dx11]   texture '{}' slot={} present={}",
                     name, entry.getValue(), binding != null);
             }
+            TextureViewAndSampler applied = this.appliedTextures.get(name);
+            if (applied != null && binding != null && binding.equals(applied)) {
+                continue;
+            }
             if (binding != null) {
                 Dx11Native.nativePassBindTexture(
                     this.handle,
@@ -276,8 +316,11 @@ final class Dx11RenderPass implements RenderPass {
                     binding.view == null ? 0L : binding.view.handle(),
                     binding.sampler == null ? 0L : binding.sampler.handle());
             } else {
+                // Declared but missing: keep the explicit unbind so a stale
+                // binding from an earlier draw or pass cannot leak in.
                 Dx11Native.nativePassBindTexture(this.handle, entry.getValue(), 0L, 0L);
             }
+            this.appliedTextures.put(name, binding);
         }
     }
 

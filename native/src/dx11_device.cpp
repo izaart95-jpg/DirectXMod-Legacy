@@ -130,13 +130,27 @@ bool compileStage(
 
 // Detaches every pixel/vertex shader resource and sampler.  D3D11 forbids a
 // resource from being bound as an SRV and a render target at the same time.
+// Only slots actually bound since the last unbind are cleared (tracked by the
+// device's high-water marks); a full 128-SRV/16-sampler sweep on both stages
+// ran on every render pass create AND destroy.
 void unbindPixelAndVertexResources(Device* device) {
     ID3D11ShaderResourceView* nullSrvs[D3D11_COMMONSHADER_INPUT_RESOURCE_SLOT_COUNT] = {};
     ID3D11SamplerState* nullSamplers[D3D11_COMMONSHADER_SAMPLER_SLOT_COUNT] = {};
-    device->context->PSSetShaderResources(0, D3D11_COMMONSHADER_INPUT_RESOURCE_SLOT_COUNT, nullSrvs);
-    device->context->VSSetShaderResources(0, D3D11_COMMONSHADER_INPUT_RESOURCE_SLOT_COUNT, nullSrvs);
-    device->context->PSSetSamplers(0, D3D11_COMMONSHADER_SAMPLER_SLOT_COUNT, nullSamplers);
-    device->context->VSSetSamplers(0, D3D11_COMMONSHADER_SAMPLER_SLOT_COUNT, nullSamplers);
+    const UINT srvCount = device->maxBoundSrvSlot;
+    const UINT samplerCount = device->maxBoundSamplerSlot;
+    device->maxBoundSrvSlot = 0;
+    device->maxBoundSamplerSlot = 0;
+    if (srvCount == 0 && samplerCount == 0) {
+        return;
+    }
+    if (srvCount > 0) {
+        device->context->PSSetShaderResources(0, srvCount, nullSrvs);
+        device->context->VSSetShaderResources(0, srvCount, nullSrvs);
+    }
+    if (samplerCount > 0) {
+        device->context->PSSetSamplers(0, samplerCount, nullSamplers);
+        device->context->VSSetSamplers(0, samplerCount, nullSamplers);
+    }
 }
 
 void setDefaultViewport(Device* device, UINT width, UINT height) {
@@ -1265,20 +1279,54 @@ bool readBackBuffer(Buffer* buffer, std::string& error) {
     return true;
 }
 
-// Uploads the current CPU shadow to a DEFAULT buffer.  D3D11's
-// UpdateSubresource always writes the whole resource, so the shadow is padded
-// to the D3D11 capacity.
+// Pushes the shadow bytes that changed since the last GPU push into a DEFAULT
+// buffer.  Only the dirty range is uploaded (a whole-buffer push still uses one
+// reusable scratch instead of allocating and zeroing a vector per write).
 bool updateDefaultBufferFromShadow(Buffer* buffer, std::string& error) {
     if (!buffer->buffer) {
         return true;
     }
-    std::vector<uint8_t> padded(buffer->capacity, 0);
-    const UINT copySize = std::min<UINT>(buffer->size, buffer->capacity);
-    if (buffer->hasShadow && buffer->shadow.size() >= copySize) {
-        std::memcpy(padded.data(), buffer->shadow.data(), copySize);
+    if (buffer->dirtyStart == Buffer::kNoDirty) {
+        return true;  // GPU copy is already current
     }
+    const UINT copyStart = buffer->dirtyStart;
+    const UINT copyEnd = std::min<UINT>(std::max<UINT>(buffer->dirtyEnd, copyStart), buffer->size);
+    buffer->dirtyStart = Buffer::kNoDirty;
+    buffer->dirtyEnd = 0;
+    if (copyEnd <= copyStart) {
+        return true;
+    }
+
+    // Constant buffers never need this GPU copy at all: passSetUniform() reads
+    // the CPU shadow and writes the pipeline's own DYNAMIC constant buffer,
+    // and every other reader (copyBufferToBuffer, mapBuffer(read), the texel
+    // texture) reads the shadow too.  The whole-resource UpdateSubresource
+    // this path used to run per uniform write was dead GPU traffic.
+    if ((buffer->usage & 128) != 0) {
+        return true;
+    }
+
+    if (copyStart == 0 && copyEnd >= buffer->capacity) {
+        // Whole-resource push: UpdateSubresource needs the padded capacity.
+        std::vector<uint8_t>& padded = buffer->uploadScratch;
+        if (padded.size() < buffer->capacity) {
+            padded.assign(buffer->capacity, 0);  // zero tail survives reuse
+        }
+        std::memcpy(padded.data(), buffer->shadow.data(), copyEnd);
+        buffer->device->context->UpdateSubresource(
+            buffer->buffer.Get(), 0, nullptr, padded.data(), 0, 0);
+        return true;
+    }
+
+    D3D11_BOX box{};
+    box.left = copyStart;
+    box.right = copyEnd;
+    box.top = 0;
+    box.bottom = 1;
+    box.front = 0;
+    box.back = 1;
     buffer->device->context->UpdateSubresource(
-        buffer->buffer.Get(), 0, nullptr, padded.data(), 0, 0);
+        buffer->buffer.Get(), 0, &box, buffer->shadow.data() + copyStart, 0, 0);
     return true;
 }
 
@@ -1312,6 +1360,19 @@ bool writeToBuffer(
             std::memcpy(buffer->shadow.data() + offset, data, size);
         }
         ++buffer->version;
+        if (size > 0) {
+            // Merge the write into the pending GPU push range (see
+            // updateDefaultBufferFromShadow).  Shadowed DYNAMIC buffers reach
+            // the GPU through the Map below; the push matters for the DEFAULT
+            // path, which used to re-upload the whole resource per write.
+            const UINT end = offset + size;
+            if (buffer->dirtyStart == Buffer::kNoDirty || offset < buffer->dirtyStart) {
+                buffer->dirtyStart = offset;
+            }
+            if (end > buffer->dirtyEnd) {
+                buffer->dirtyEnd = end;
+            }
+        }
     }
 
     if (!buffer->buffer) {
@@ -1338,6 +1399,9 @@ bool writeToBuffer(
                         buffer->capacity - buffer->size);
         }
         buffer->device->context->Unmap(buffer->buffer.Get(), 0);
+        // The Map above made the whole GPU copy match the shadow.
+        buffer->dirtyStart = Buffer::kNoDirty;
+        buffer->dirtyEnd = 0;
         return true;
     }
 
@@ -1496,7 +1560,7 @@ void unmapBuffer(Buffer* buffer) {
     if (buffer->mappedWrite) {
         ID3D11DeviceContext* context = buffer->device->context.Get();
         if (buffer->mappedShadowOnly) {
-            // Writes landed directly in the shadow.
+            // Writes landed directly in the shadow; there is no GPU buffer.
             ++buffer->version;
         } else {
             // The pointer returned by Map is invalid after Unmap, so snapshot
@@ -1516,6 +1580,11 @@ void unmapBuffer(Buffer* buffer) {
             } else {
                 context->Unmap(buffer->buffer.Get(), 0);
             }
+            // The unmap/copy above made the whole GPU copy match the shadow,
+            // so any pending dirty range from earlier writeToBuffer calls is
+            // now obsolete.
+            buffer->dirtyStart = Buffer::kNoDirty;
+            buffer->dirtyEnd = 0;
         }
     }
     buffer->mapped = false;
@@ -1627,6 +1696,18 @@ bool copyBufferToBuffer(
         destination->shadow.size() >= destinationOffset + size) {
         std::memcpy(destination->shadow.data() + destinationOffset, sourceData, size);
         ++destination->version;
+        // Keep any pending GPU push for earlier shadow writes (the copy only
+        // refreshed its own range on the GPU).
+        const UINT copyEnd = destinationOffset + size;
+        if (size > 0) {
+            if (destination->dirtyStart == Buffer::kNoDirty
+                || destinationOffset < destination->dirtyStart) {
+                destination->dirtyStart = destinationOffset;
+            }
+            if (copyEnd > destination->dirtyEnd) {
+                destination->dirtyEnd = copyEnd;
+            }
+        }
     }
     return true;
 }
@@ -2507,7 +2588,12 @@ void passSetUniform(RenderPass* pass, UINT slot, Buffer* buffer, UINT offset, UI
                      hresultToString(hr).c_str());
         return;
     }
-    std::memset(mapped.pData, 0, capacity);
+    // WRITE_DISCARD already invalidates the previous contents, so only the
+    // tail past the uploaded slice needs zeroing; zeroing the whole capacity
+    // per uniform set (per draw) was measurable waste.
+    if (capacity > size) {
+        std::memset(static_cast<uint8_t*>(mapped.pData) + size, 0, capacity - size);
+    }
     if (size > 0) {
         std::memcpy(mapped.pData, source, std::min(size, capacity));
     }
@@ -2609,6 +2695,9 @@ void passSetTexelBuffer(RenderPass* pass, UINT slot, Buffer* buffer, int format)
     ID3D11ShaderResourceView* srv = buffer->texelSrv.Get();
     pass->device->context->PSSetShaderResources(slot, 1, &srv);
     pass->device->context->VSSetShaderResources(slot, 1, &srv);
+    if (pass->device->maxBoundSrvSlot < slot + 1) {
+        pass->device->maxBoundSrvSlot = slot + 1;
+    }
 }
 
 void passBindTexture(RenderPass* pass, UINT slot, TextureView* view, Sampler* sampler) {
@@ -2622,6 +2711,12 @@ void passBindTexture(RenderPass* pass, UINT slot, TextureView* view, Sampler* sa
     context->VSSetShaderResources(slot, 1, &srv);
     context->PSSetSamplers(slot, 1, &samplerState);
     context->VSSetSamplers(slot, 1, &samplerState);
+    if (pass->device->maxBoundSrvSlot < slot + 1) {
+        pass->device->maxBoundSrvSlot = slot + 1;
+    }
+    if (pass->device->maxBoundSamplerSlot < slot + 1) {
+        pass->device->maxBoundSamplerSlot = slot + 1;
+    }
 }
 
 void passSetVertexBuffer(RenderPass* pass, Buffer* buffer) {
@@ -2713,7 +2808,8 @@ void passDrawIndexed(RenderPass* pass, UINT firstIndex, UINT indexCount,
             std::fprintf(stderr, "[dx11] fan index range out of bounds\n");
             return;
         }
-        std::vector<uint32_t> source(indexCount);
+        std::vector<uint32_t>& source = pass->fanSourceScratch;
+        source.resize(static_cast<size_t>(indexCount));
         const uint8_t* raw = pass->indexBuffer->shadow.data() +
                              static_cast<size_t>(firstIndex) * bytesPerIndex;
         for (UINT i = 0; i < indexCount; ++i) {
@@ -2721,7 +2817,7 @@ void passDrawIndexed(RenderPass* pass, UINT firstIndex, UINT indexCount,
                             ? reinterpret_cast<const uint32_t*>(raw)[i]
                             : reinterpret_cast<const uint16_t*>(raw)[i];
         }
-        std::vector<uint32_t> fan;
+        std::vector<uint32_t>& fan = pass->fanOutputScratch;
         if (!fanFromIndices(source.data(), indexCount, baseVertex, fan) || fan.empty()) {
             return;
         }
@@ -2734,8 +2830,6 @@ void passDrawIndexed(RenderPass* pass, UINT firstIndex, UINT indexCount,
         pass->device->context->DrawIndexedInstanced(
             static_cast<UINT>(fan.size()), instanceCount, 0, 0, 0);
         restoreIndexBuffer(pass);
-        pass->device->context->IASetPrimitiveTopology(
-            D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
         return;
     }
 
@@ -2755,11 +2849,12 @@ void passDraw(RenderPass* pass, UINT firstVertex, UINT vertexCount, UINT instanc
         if (vertexCount < 3) {
             return;
         }
-        std::vector<uint32_t> source(vertexCount);
+        std::vector<uint32_t>& source = pass->fanSourceScratch;
+        source.resize(static_cast<size_t>(vertexCount));
         for (UINT i = 0; i < vertexCount; ++i) {
             source[i] = firstVertex + i;
         }
-        std::vector<uint32_t> fan;
+        std::vector<uint32_t>& fan = pass->fanOutputScratch;
         if (!fanFromIndices(source.data(), vertexCount, 0, fan) || fan.empty()) {
             return;
         }
@@ -2773,8 +2868,6 @@ void passDraw(RenderPass* pass, UINT firstVertex, UINT vertexCount, UINT instanc
         pass->device->context->DrawIndexedInstanced(
             static_cast<UINT>(fan.size()), instanceCount, 0, 0, 0);
         restoreIndexBuffer(pass);
-        pass->device->context->IASetPrimitiveTopology(
-            D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
         return;
     }
 
